@@ -9,6 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-# Legacy code
-
-legacy/
+# Legacy code — track the directory but ignore bulky MATLAB artifacts inside it
+legacy/**/*.mat
+legacy/**/*.fig
