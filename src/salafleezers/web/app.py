@@ -19,7 +19,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from salafleezers.web.api import analysis, files, sessions, traces
 from salafleezers.web.ws.session import handle_session_ws
 
-_SPA_DIR = Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+def _find_spa_dir() -> Path:
+    """Locate the built Svelte SPA.
+
+    Checks the installed-package location first (``force-include``d into the
+    wheel at build time), then falls back to the source-tree ``frontend/dist``
+    for `uv run` / editable-install development.
+    """
+    installed = Path(__file__).parent / "frontend_dist"
+    if installed.exists():
+        return installed
+    return Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+
+
+_SPA_DIR = _find_spa_dir()
 
 _DEFAULT_ORIGINS = [
     "http://localhost:5173",   # Vite dev server

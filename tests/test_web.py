@@ -128,6 +128,70 @@ def test_delete_session(client):
 
 
 # ---------------------------------------------------------------------------
+# Save / load (disk persistence, auth stub)
+# ---------------------------------------------------------------------------
+
+def test_save_and_load_session_anonymous(client):
+    """No SFZ_AUTH_TOKEN configured -> save/load work with no auth header."""
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(f"/api/sessions/{sid}/save")
+    assert r.status_code == 200
+    assert "saved_to" in r.json()
+
+    r = client.post(f"/api/sessions/load/{sid}")
+    assert r.status_code == 200
+    assert r.json()["loaded"] == sid
+
+
+def test_save_session_requires_token_when_configured(client, monkeypatch):
+    monkeypatch.setenv("SFZ_AUTH_TOKEN", "s3cret")
+    sid = client.post("/api/sessions").json()["session_id"]
+
+    r = client.post(f"/api/sessions/{sid}/save")
+    assert r.status_code == 401
+
+    r = client.post(
+        f"/api/sessions/{sid}/save", headers={"Authorization": "Bearer wrong"}
+    )
+    assert r.status_code == 401
+
+    r = client.post(
+        f"/api/sessions/{sid}/save", headers={"Authorization": "Bearer s3cret"}
+    )
+    assert r.status_code == 200
+
+
+def test_empty_string_token_treated_as_unset(client, monkeypatch):
+    """Docker Compose's `${SFZ_AUTH_TOKEN:-}` sets an empty string, not unset."""
+    monkeypatch.setenv("SFZ_AUTH_TOKEN", "")
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(f"/api/sessions/{sid}/save")
+    assert r.status_code == 200
+
+
+def test_saved_sessions_are_namespaced_per_principal(client, monkeypatch, tmp_path):
+    """Two different principals saving the same session_id shouldn't collide."""
+    from salafleezers.web.api import sessions as sessions_module
+
+    monkeypatch.setattr(
+        sessions_module, "_backend",
+        sessions_module.LocalFilesystemStore(root=tmp_path),
+    )
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    client.post(f"/api/sessions/{sid}/save")  # anonymous principal
+
+    monkeypatch.setenv("SFZ_AUTH_TOKEN", "s3cret")
+    r = client.post(
+        f"/api/sessions/{sid}/save", headers={"Authorization": "Bearer s3cret"}
+    )
+    assert r.status_code == 200
+
+    saved_dirs = sorted(p.name for p in tmp_path.iterdir())
+    assert saved_dirs == ["local", "shared"]
+
+
+# ---------------------------------------------------------------------------
 # Files — open (uses a real temp .npz file)
 # ---------------------------------------------------------------------------
 
@@ -389,6 +453,62 @@ def test_kinetics_inline_dwell_times(client, synthetic_session):
     assert len(body["rates"]) == 1
     # Rate should be close to 1/0.5 = 2 s⁻¹
     assert 0.5 < body["rates"][0] < 5.0
+
+
+def test_kde(client, synthetic_session):
+    session, file_id = synthetic_session
+    r = client.post("/api/kde", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "channel": "extension",
+        "n_points": 128,
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert len(body["x"]) == 128
+    assert len(body["density"]) == 128
+    assert body["bandwidth"] > 0
+
+
+def test_violin(client, synthetic_session):
+    session, file_id = synthetic_session
+    r = client.post("/api/violin", json={
+        "session_id": session.session_id,
+        "file_ids": [file_id],
+        "channel": "extension",
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert len(body["groups"]) == 1
+    g = body["groups"][0]
+    assert g["label"] == "test.npz"
+    assert g["n"] == 10_000
+    assert len(g["x"]) == len(g["density"])
+
+
+def test_violin_missing_files(client, synthetic_session):
+    session, _ = synthetic_session
+    r = client.post("/api/violin", json={
+        "session_id": session.session_id,
+        "file_ids": [],
+        "channel": "extension",
+    })
+    assert r.status_code == 422
+
+
+def test_msd(client, synthetic_session):
+    session, file_id = synthetic_session
+    r = client.post("/api/msd", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "channel": "extension",
+        "max_lag": 100,
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert len(body["lags_s"]) == 101
+    assert len(body["msd"]) == 101
+    assert body["msd"][0] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_kinetics_missing_input(client, synthetic_session):

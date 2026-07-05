@@ -1,0 +1,19 @@
+services:
+  sfz-gui:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - sfz-sessions:/root/.salafleezers
+      # Point SFZ_DATA_DIR at your local trace-file directory so `sfz gui`'s
+      # "Open file" can reach files by path inside the container, e.g.
+      # /data/230415_001.dat. No default: the repo's own data/ isn't yours.
+      - ${SFZ_DATA_DIR:?set SFZ_DATA_DIR to your local trace-file directory}:/data:ro
+    environment:
+      # Set to enable the shared-secret auth gate for a shared-lab
+      # deployment (see src/salafleezers/web/auth.py). Leave unset for
+      # single-user local-first use.
+      SFZ_AUTH_TOKEN: ${SFZ_AUTH_TOKEN:-}
+
+volumes:
+  sfz-sessions:

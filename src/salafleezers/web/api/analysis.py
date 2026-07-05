@@ -5,6 +5,9 @@ POST /api/wlc/fit        → extensible WLC fitting
 POST /api/velocity       → Savitzky-Golay velocity distribution
 POST /api/pwd            → pairwise-distance histogram
 POST /api/kinetics/fit   → exponential / gamma dwell-time fit
+POST /api/kde            → kernel density estimation
+POST /api/violin         → distribution comparison across files
+POST /api/msd            → mean-squared displacement
 """
 
 from __future__ import annotations
@@ -13,14 +16,21 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from salafleezers.web.schemas import (
+    KDERequest,
+    KDEResult,
     KineticsRequest,
     KineticsResult,
+    MSDRequest,
+    MSDResult,
     PWDRequest,
     PWDResult,
     StepFindRequest,
     StepFindResult,
     VelocityRequest,
     VelocityResult,
+    ViolinGroup,
+    ViolinRequest,
+    ViolinResult,
     WLCFitRequest,
     WLCFitResult,
 )
@@ -292,3 +302,106 @@ async def run_kinetics(request: KineticsRequest):
 
     session.kinetics_results[request.file_id] = out.model_dump()
     return out
+
+
+# ---------------------------------------------------------------------------
+# Kernel density estimation
+# ---------------------------------------------------------------------------
+
+@router.post("/kde", response_model=KDEResult, status_code=201)
+async def run_kde(request: KDERequest):
+    """Estimate a kernel density for one channel (port of kdf.m)."""
+    from salafleezers.analysis.stats import kde
+
+    session = _get_session(request.session_id)
+    f = _get_file(session, request.file_id)
+    data = _resolve_channel(f, request.channel)
+    time = f.time.astype(np.float64)
+    data, _ = _crop_if_requested(data, time, request.t_start, request.t_end)
+
+    try:
+        r = kde(data, n_points=request.n_points, bandwidth=request.bandwidth)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"KDE failed: {exc}")
+
+    out = KDEResult(
+        session_id=request.session_id,
+        file_id=request.file_id,
+        x=r.x.tolist(),
+        density=r.density.tolist(),
+        bandwidth=r.bandwidth,
+    )
+    session.kde_results[request.file_id] = out.model_dump()
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Distribution comparison (violin.m)
+# ---------------------------------------------------------------------------
+
+@router.post("/violin", response_model=ViolinResult, status_code=201)
+async def run_violin(request: ViolinRequest):
+    """Compare one channel's distribution across multiple loaded files."""
+    from salafleezers.analysis.stats import violin_data
+
+    session = _get_session(request.session_id)
+    if not request.file_ids:
+        raise HTTPException(status_code=422, detail="Provide at least one file_id")
+
+    groups: dict[str, np.ndarray] = {}
+    for fid in request.file_ids:
+        f = _get_file(session, fid)
+        groups[f.filename] = _resolve_channel(f, request.channel)
+
+    try:
+        result = violin_data(groups, bandwidth=request.bandwidth)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Violin failed: {exc}")
+
+    return ViolinResult(
+        session_id=request.session_id,
+        channel=request.channel,
+        groups=[
+            ViolinGroup(
+                label=label,
+                x=v.x.tolist(),
+                density=v.density.tolist(),
+                median=v.median,
+                quartile_25=v.quartile_25,
+                quartile_75=v.quartile_75,
+                whisker_lo=v.whisker_lo,
+                whisker_hi=v.whisker_hi,
+                n=v.n,
+            )
+            for label, v in result.items()
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mean-squared displacement
+# ---------------------------------------------------------------------------
+
+@router.post("/msd", response_model=MSDResult, status_code=201)
+async def run_msd(request: MSDRequest):
+    """Mean-squared displacement via FFT cross-correlation (port of msd*.m)."""
+    from salafleezers.analysis.stats import msd_fft
+
+    session = _get_session(request.session_id)
+    f = _get_file(session, request.file_id)
+    data = _resolve_channel(f, request.channel)
+    time = f.time.astype(np.float64)
+    data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
+
+    if len(data) < 2:
+        raise HTTPException(status_code=422, detail="Not enough samples for MSD")
+
+    lags, msd = msd_fft(data, max_lag=request.max_lag)
+    dt = float(time[1] - time[0]) if len(time) > 1 else 1.0
+
+    return MSDResult(
+        session_id=request.session_id,
+        file_id=request.file_id,
+        lags_s=(lags * dt).tolist(),
+        msd=msd.tolist(),
+    )

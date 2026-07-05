@@ -47,6 +47,7 @@ class Session:
     velocity_results: dict[str, Any] = field(default_factory=dict)
     pwd_results: dict[str, Any] = field(default_factory=dict)
     kinetics_results: dict[str, Any] = field(default_factory=dict)
+    kde_results: dict[str, Any] = field(default_factory=dict)
 
 
 class SessionManager:

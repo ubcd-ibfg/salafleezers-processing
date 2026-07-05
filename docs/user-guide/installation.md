@@ -1,0 +1,74 @@
+# Installation
+
+## Requirements
+
+- Python ≥ 3.13
+- [uv](https://docs.astral.sh/uv/) — the package manager this project uses throughout
+
+## Install
+
+```bash
+git clone <repo-url>
+cd salafleezers-processing
+
+# Core install (CLI + processing pipeline, no GUI)
+uv sync
+```
+
+`sfz` ships with three optional extras, layered on top of the core install:
+
+| Extra | Adds | Command |
+| --- | --- | --- |
+| `gui` | FastAPI + uvicorn + the built Svelte SPA — needed for `sfz gui` | `uv sync --extra gui` |
+| `docs` | MkDocs Material + mkdocstrings — needed to build this site | `uv sync --extra docs` |
+| `dev` | pytest, ruff, mypy, hypothesis | `uv sync --extra dev` |
+
+Extras compose — e.g. for a full development environment:
+
+```bash
+uv sync --extra gui --extra docs --extra dev
+```
+
+Everything runs via `uv run`, which uses the project's locked virtual environment without
+needing to activate it:
+
+```bash
+uv run sfz inspect path/to/230415_001.dat
+uv run sfz gui
+uv run pytest
+```
+
+## Building the web GUI frontend
+
+The Svelte SPA that `sfz gui` serves is built separately with Node — it isn't part of the
+Python package build. If `frontend/dist/` doesn't already exist:
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+`sfz gui` looks for the built assets at `frontend/dist` (source checkout) or
+`salafleezers/web/frontend_dist` (installed wheel — the build embeds the SPA via
+`pyproject.toml`'s `force-include`, so a `pip`/`uv` install of a built wheel already has it).
+
+## Docker
+
+A multi-stage `Dockerfile` builds the frontend and the Python runtime into one image:
+
+```bash
+docker compose up -d
+```
+
+See `docker-compose.yml` in the repo root — set `SFZ_DATA_DIR` to the directory holding your
+trace files (mounted read-only at `/data`), and optionally `SFZ_AUTH_TOKEN` to gate access
+behind a shared secret for a small shared-lab deployment. Session data persists in a named
+volume (`sfz-sessions`) across container restarts/upgrades.
+
+## Verifying the install
+
+```bash
+uv run sfz --help
+uv run pytest -q
+```

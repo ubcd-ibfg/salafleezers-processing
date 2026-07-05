@@ -48,7 +48,7 @@ def window_filter(
     window_size = 2 * half_width + 1
 
     if fn == "mean" or fn is np.mean:
-        filtered = uniform_filter1d(data, window_size, mode="nearest")
+        filtered = _centered_shrinking_mean(data, half_width)
     elif fn == "sum" or fn is np.sum:
         filtered = uniform_filter1d(data, window_size, mode="nearest") * window_size
     else:
@@ -62,6 +62,28 @@ def window_filter(
     if decimate is not None:
         return filtered[::decimate]
     return filtered
+
+
+def _centered_shrinking_mean(data: np.ndarray, half_width: int) -> np.ndarray:
+    """Centred moving average with a symmetric shrinking window at the edges.
+
+    Matches MATLAB's ``windowFilter(@mean, data, half_width, 1)`` exactly
+    (verified against a golden fixture, see ``tests/golden/test_filters_golden.py``).
+    Near either edge, rather than replicating the boundary value (as
+    ``scipy.ndimage.uniform_filter1d(mode='nearest')`` does), the window
+    radius shrinks to whatever fits symmetrically in-bounds — e.g. at the
+    very first sample the "window" is just that one point; one step in, it's
+    the centred 3-point average; and so on until the full ``half_width``
+    window fits. Interior points (more than ``half_width`` from either edge)
+    are identical to the full centred box average.
+    """
+    n = len(data)
+    cs = np.concatenate([[0.0], np.cumsum(data)])
+    idx = np.arange(n)
+    r = np.minimum(np.minimum(idx, half_width), n - 1 - idx)
+    lo = idx - r
+    hi = idx + r + 1
+    return (cs[hi] - cs[lo]) / (hi - lo)
 
 
 def _block_decimate(
@@ -83,12 +105,14 @@ def _block_decimate(
 def smooth(data: np.ndarray, n: int) -> np.ndarray:
     """Uniform moving average of width *n* — port of MATLAB's ``smooth(x, n)``.
 
-    Uses edge-replication at boundaries (``mode='nearest'``), which differs
-    slightly from MATLAB's edge-shortening convention at the boundaries but
-    is equivalent in the interior.
+    Uses the same symmetric shrinking-window edge handling as
+    ``window_filter``'s ``@mean`` path (``windowFilter.m``'s own comment
+    notes its mean implementation was "taken from @smooth"), so this matches
+    MATLAB's default ``'moving'`` method exactly, including at the edges —
+    not the edge-replication a naive ``uniform_filter1d`` would give.
     """
     data = np.asarray(data, dtype=np.float64)
-    return uniform_filter1d(data, size=n, mode="nearest")
+    return _centered_shrinking_mean(data, half_width=(n - 1) // 2)
 
 
 def bilateral_filter(

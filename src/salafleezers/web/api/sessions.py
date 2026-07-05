@@ -13,14 +13,26 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from salafleezers.web.auth import Principal, get_current_principal
 from salafleezers.web.schemas import SessionInfo
 from salafleezers.web.sessions import Session, LoadedFile, session_manager
-from salafleezers.web.storage import LocalFilesystemStore
+from salafleezers.web.storage import LocalFilesystemStore, UserScopedStore
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
-_store = LocalFilesystemStore()
+_backend = LocalFilesystemStore()
+
+
+def _store_for(principal: Principal) -> UserScopedStore:
+    """Scope disk storage to the calling principal (see web/auth.py).
+
+    In the local-first default (no SFZ_AUTH_TOKEN configured), every caller
+    resolves to the same anonymous principal, so this behaves exactly like
+    using a single shared LocalFilesystemStore -- the namespacing only
+    matters once shared-server / multi-user auth is turned on.
+    """
+    return UserScopedStore(_backend, principal.user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +79,9 @@ async def delete_session(session_id: str):
 
 
 @router.post("/{session_id}/save")
-async def save_session(session_id: str):
+async def save_session(
+    session_id: str, principal: Principal = Depends(get_current_principal)
+):
     """Persist a session's metadata and results to disk."""
     try:
         s = session_manager.get(session_id)
@@ -83,16 +97,19 @@ async def save_session(session_id: str):
         "velocity_results": s.velocity_results,
         "pwd_results": s.pwd_results,
         "kinetics_results": s.kinetics_results,
+        "kde_results": s.kde_results,
     }
-    path = _store.save_session(session_id, state)
+    path = _store_for(principal).save_session(session_id, state)
     return {"saved_to": str(path)}
 
 
 @router.post("/load/{session_id}")
-async def load_session(session_id: str):
+async def load_session(
+    session_id: str, principal: Principal = Depends(get_current_principal)
+):
     """Reload a previously saved session from disk, re-parsing file arrays."""
     try:
-        state = _store.load_session(session_id)
+        state = _store_for(principal).load_session(session_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Saved session not found on disk")
 
@@ -104,6 +121,7 @@ async def load_session(session_id: str):
         velocity_results=state.get("velocity_results", {}),
         pwd_results=state.get("pwd_results", {}),
         kinetics_results=state.get("kinetics_results", {}),
+        kde_results=state.get("kde_results", {}),
     )
     session_manager._sessions[s.session_id] = s
 

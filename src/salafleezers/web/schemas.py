@@ -205,6 +205,77 @@ class KineticsResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Kernel density estimation
+# ---------------------------------------------------------------------------
+
+class KDERequest(BaseModel):
+    session_id: str
+    file_id: str
+    channel: str = "extension"
+    n_points: int = 512
+    bandwidth: float | str = "scott"
+    t_start: float | None = None
+    t_end: float | None = None
+
+
+class KDEResult(BaseModel):
+    session_id: str
+    file_id: str
+    x: list[float]
+    density: list[float]
+    bandwidth: float
+
+
+# ---------------------------------------------------------------------------
+# Distribution comparison (violin.m)
+# ---------------------------------------------------------------------------
+
+class ViolinRequest(BaseModel):
+    session_id: str
+    file_ids: list[str]     # one group/violin per file
+    channel: str = "extension"
+    bandwidth: float | str = "scott"
+
+
+class ViolinGroup(BaseModel):
+    label: str
+    x: list[float]
+    density: list[float]
+    median: float
+    quartile_25: float
+    quartile_75: float
+    whisker_lo: float
+    whisker_hi: float
+    n: int
+
+
+class ViolinResult(BaseModel):
+    session_id: str
+    channel: str
+    groups: list[ViolinGroup]
+
+
+# ---------------------------------------------------------------------------
+# Mean-squared displacement (msd*.m)
+# ---------------------------------------------------------------------------
+
+class MSDRequest(BaseModel):
+    session_id: str
+    file_id: str
+    channel: str = "extension"
+    max_lag: int | None = None
+    t_start: float | None = None
+    t_end: float | None = None
+
+
+class MSDResult(BaseModel):
+    session_id: str
+    file_id: str
+    lags_s: list[float]
+    msd: list[float]
+
+
+# ---------------------------------------------------------------------------
 # Measurement (WebSocket response)
 # ---------------------------------------------------------------------------
 

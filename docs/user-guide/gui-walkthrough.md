@@ -1,0 +1,70 @@
+# GUI walkthrough
+
+`sfz gui` launches a FastAPI backend and opens a browser at the built Svelte SPA. Everything
+below is a real screenshot of the actual running app (synthetic staircase test data, not real
+instrument output — the shapes are what matter here, not the specific numbers).
+
+## Opening a file
+
+The GUI is local-first: it opens files by path on the machine `sfz gui` is running on (there's
+no upload — this is the same machine your instrument writes `.dat` files to, or wherever you
+`scp`'d them). Type a path and click **Open file**; `.dat`, `.h5`, `.mat`, and `.npz` are all
+supported (see [Data formats](data-formats.md)).
+
+![Empty state](../assets/screenshots/01-empty-state.png)
+
+## Trace Viewer
+
+The Trace Viewer (replacing `PhageGUIv4.m`) shows the selected channel over time. Drag on the
+plot to select a range, then:
+
+- **Zoom to selection** — narrows the view and re-fetches at finer resolution
+- **Apply crop** — the same selection, sent to the backend session over the live WebSocket
+- **Measure selection** — mean/std/median/min/max/duration over the range
+- **Undo / Redo** — steps back and forward through your zoom/crop history
+- **Export PNG** — grabs the uPlot canvas directly, or **Export CSV** for the raw data
+
+![Trace viewer](../assets/screenshots/02-trace-viewer.png)
+
+Running **step-find** (Kalafut-Visscher or HMM — see
+[Step-finding theory](../physics/step-finding.md)) overlays the detected staircase directly on
+the trace:
+
+![Trace viewer with step overlay](../assets/screenshots/03-trace-viewer-steps.png)
+
+### Analysis panels
+
+Below the trace, six tabs each call one analysis endpoint and plot the result: Velocity,
+Pairwise distance, Dwell times, Kernel density, Distributions (compares one channel's
+distribution across every loaded file), and MSD. Here's Kernel density on the same staircase —
+note how the density peaks line up exactly with the step levels above:
+
+![Kernel density panel](../assets/screenshots/04-analysis-panel-kde.png)
+
+## Force-Extension viewer
+
+The Force-Extension viewer (replacing `ForExtGUI_V2.m`) plots one channel against another —
+typically force vs. extension — and fits an extensible WLC model
+(see [Force & extension](../physics/force-extension.md)) with a residuals subplot underneath:
+
+![Force-extension viewer with WLC fit](../assets/screenshots/05-force-extension.png)
+
+(This particular fit is nonsense — `P=200nm` and `S=100000pN` are both pinned at their upper
+bounds, and χ² is enormous — because the demo data's "force" and "extension" channels are
+independent random noise, not a real pulling curve. It's here to show the UI working, not to
+demonstrate a real fit.)
+
+## Theming & shortcuts
+
+Toggle dark/light with the button in the top right, or press `t`. Hover the keyboard icon (⌨)
+for the full shortcut list: `1`/`2` switch views, `z`/`c`/`m`/`0` zoom/crop/measure/reset,
+Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z undo/redo, Ctrl/Cmd+S saves the session.
+
+![Dark mode](../assets/screenshots/06-dark-mode.png)
+
+## Sessions
+
+**Save session** persists the loaded files' paths, crops, and every cached analysis result to
+disk (`~/.salafleezers/sessions/`, or namespaced by user if `SFZ_AUTH_TOKEN` is set — see
+[Architecture](../developer/architecture.md#storage-auth)) — reload the same session ID later
+to pick up where you left off, re-parsing the original files from their saved paths.

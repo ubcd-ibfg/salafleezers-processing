@@ -1,0 +1,81 @@
+site_name: SalaFleezer Processing
+site_description: MATLAB-free optical-tweezers data processing & analysis platform
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep-purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep-purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Installation: user-guide/installation.md
+      - Quickstart (CLI): user-guide/quickstart.md
+      - CLI reference: user-guide/cli-reference.md
+      - GUI walkthrough: user-guide/gui-walkthrough.md
+      - Data formats: user-guide/data-formats.md
+      - Batch files: user-guide/batch-files.md
+  - Physics & Methods:
+      - Optical trapping basics: physics/optical-trapping.md
+      - Calibration & trap stiffness: physics/calibration.md
+      - Force & extension: physics/force-extension.md
+      - Step-finding theory: physics/step-finding.md
+      - Velocity & pausing: physics/velocity-pausing.md
+      - Pairwise-distance method: physics/pairwise-distance.md
+      - Dwell-time kinetics: physics/dwell-time-kinetics.md
+  - Developer Guide:
+      - Architecture: developer/architecture.md
+      - MATLAB → Python mapping: developer/matlab-mapping.md
+      - Adding an analysis module: developer/adding-analysis-module.md
+      - API reference: developer/api-reference.md
+      - Testing & golden files: developer/testing-golden-files.md
+      - Contributing: developer/contributing.md
+      - Full roadmap: ROADMAP.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            docstring_style: numpy
+            merge_init_into_class: true
