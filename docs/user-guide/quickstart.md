@@ -78,6 +78,13 @@ analysis panels call — see [Architecture](../developer/architecture.md).
 
 ## 5. Launch the interactive GUI
 
+On a source checkout, build the frontend once first (skipping this leaves the browser tab
+blank — see [Building the web GUI frontend](installation.md#building-the-web-gui-frontend)):
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+```
+
 ```bash
 uv run sfz gui
 ```

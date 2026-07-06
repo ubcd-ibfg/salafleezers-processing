@@ -4,6 +4,10 @@
 below is a real screenshot of the actual running app (synthetic staircase test data, not real
 instrument output — the shapes are what matter here, not the specific numbers).
 
+On a source checkout, the SPA has to be built once with Node before `sfz gui` has anything to
+serve — see [Building the web GUI frontend](installation.md#building-the-web-gui-frontend). If
+you skip it, the server still starts fine but the browser tab stays blank.
+
 ## Opening a file
 
 The GUI is local-first: it opens files by path on the machine `sfz gui` is running on (there's

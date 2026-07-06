@@ -18,7 +18,10 @@ The SalaFleezer instrument records raw QPD voltage traces in binary `.dat` files
 
 - Python ≥ 3.13
 - [uv](https://docs.astral.sh/uv/) (package manager)
-- Node.js ≥ 20 (only if you want to rebuild the frontend; a built copy ships in the wheel)
+- Node.js ≥ 20 — only needed if you're on a **built wheel/PyPI install** (the compiled SPA ships
+  inside it) *and* don't want to touch the frontend. A `git clone` + `uv sync` checkout has no
+  built copy and **requires** an `npm run build` before `sfz gui` will serve anything — see
+  [Launch the interactive web GUI](#5-launch-the-interactive-web-gui) below.
 
 ---
 
@@ -149,7 +152,21 @@ Add `--json` to any of these for machine-readable output. Run `uv run sfz <comma
 
 ### 5. Launch the interactive web GUI
 
-Requires the `gui` extra (`uv sync --extra gui`):
+Requires the `gui` extra (`uv sync --extra gui`).
+
+The GUI backend serves a prebuilt Svelte SPA — it does **not** build it for you. On a `git
+clone` checkout, `frontend/dist/` doesn't exist yet, so build it once first (needs Node ≥ 20):
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+(A built wheel/PyPI install already embeds the compiled SPA, so this step only applies to
+source checkouts. Skipping it doesn't error — `sfz gui` starts fine, but every route 404s and
+the browser tab just stays blank.)
 
 ```bash
 uv run sfz gui

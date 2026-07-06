@@ -53,6 +53,15 @@ npm run build
 `salafleezers/web/frontend_dist` (installed wheel — the build embeds the SPA via
 `pyproject.toml`'s `force-include`, so a `pip`/`uv` install of a built wheel already has it).
 
+!!! warning "Missing build = blank browser tab, not an error"
+    A `git clone` + `uv sync` checkout is an editable install, so it never has
+    `salafleezers/web/frontend_dist` — only the `frontend/dist` fallback applies, and that
+    directory doesn't exist until you run the build above. If you skip it, `sfz gui` still
+    starts and prints its usual "listening on ..." banner, but `create_app()` never mounts the
+    SPA (`_SPA_DIR.exists()` is `False`), so every route returns 404 and the browser just shows
+    an empty page — it isn't hung, there's just nothing being served. If `sfz gui` looks stuck
+    empty, run the Node build first.
+
 ## Docker
 
 A multi-stage `Dockerfile` builds the frontend and the Python runtime into one image:
