@@ -3,6 +3,8 @@ site_description: MATLAB-free optical-tweezers data processing & analysis platfo
 
 theme:
   name: material
+  logo: assets/logo/salafleezers_logo_small.png
+  favicon: assets/logo/salafleezers_logo_small.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -51,6 +53,7 @@ nav:
       - Full roadmap: ROADMAP.md
 
 markdown_extensions:
+  - attr_list
   - admonition
   - pymdownx.details
   - pymdownx.superfences

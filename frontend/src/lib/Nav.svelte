@@ -19,7 +19,10 @@
 </script>
 
 <nav>
-  <div class="brand">SalaFleezer</div>
+  <div class="brand">
+    <img src="/logo.png" alt="SalaFleezer logo" class="brand-logo" />
+    SalaFleezer
+  </div>
 
   <div class="tabs">
     <button class:active={view === 'trace'} onclick={() => (view = 'trace')}>Trace Viewer</button>
@@ -58,8 +61,16 @@
     background: var(--bg-panel);
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-weight: 600;
     color: var(--text-h);
+  }
+  .brand-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
   }
   .tabs {
     display: flex;

@@ -1,5 +1,7 @@
 # SalaFleezer Processing
 
+![SalaFleezers logo](assets/logo/salafleezers_logo_small.png){ width="200" align="right" }
+
 A MATLAB-free optical-tweezers data processing and analysis platform, replacing the
 BLab's [`BLabOTMatlab`](https://github.com/abmtong/BLabOTMatlab) `RawDataProcessing` +
 `DataGUIs` codebase with Python.

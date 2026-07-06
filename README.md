@@ -1,5 +1,7 @@
 # salafleezers-processing
 
+![SalaFleezers logo](docs/assets/logo/salafleezers_logo_small.png)
+
 **SalaFleezer-processing** is a Python toolkit for turning SalaFleezer optical-tweezers acquisitions into calibrated, analysis-ready force spectroscopy data.
 
 The SalaFleezer instrument records raw QPD voltage traces in binary `.dat` files. This repository provides the end-to-end processing workflow: loading and validating raw traces, calibrating trap stiffness with Lorentzian power-spectrum fitting, and converting detector signals into force (pN) and extension (nm) outputs for downstream single-molecule analysis. The project is organized into three pillars:
