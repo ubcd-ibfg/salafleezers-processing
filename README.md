@@ -1,8 +1,8 @@
 # salafleezers-processing
 
-Python port of the **SalaFleezer** optical tweezers data processing pipeline, originally written in MATLAB by A. Tong (Berkeley Lab, GPL v3).
+**SalaFleezer-processing** is a Python toolkit for turning SalaFleezer optical-tweezers acquisitions into calibrated, analysis-ready force spectroscopy data.
 
-SalaFleezer is a timeshared optical tweezers instrument that reads raw QPD signals from binary `.dat` files, calibrates trap stiffness via Lorentzian power spectrum fitting, and converts raw signals to force (pN) and extension (nm). This project is a complete, MATLAB-free replacement for the original `RawDataProcessing` + `DataGUIs` codebase, with three faces:
+The SalaFleezer instrument records raw QPD voltage traces in binary `.dat` files. This repository provides the end-to-end processing workflow: loading and validating raw traces, calibrating trap stiffness with Lorentzian power-spectrum fitting, and converting detector signals into force (pN) and extension (nm) outputs for downstream single-molecule analysis. The project is organized into three pillars:
 
 - A **CLI** (`sfz`) — inspect, calibrate, batch-process, and run every analysis routine headlessly.
 - A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA trace/force-extension viewer that replaces the MATLAB `DataGUIs`.
@@ -23,7 +23,7 @@ SalaFleezer is a timeshared optical tweezers instrument that reads raw QPD signa
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/ubcd-ibfg/salafleezers-processing
 cd salafleezers-processing
 
 # Install core dependencies (creates .venv automatically)
