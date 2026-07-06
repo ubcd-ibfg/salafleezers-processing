@@ -43,11 +43,15 @@ def step_velocities(
 
     Port of ppKVv4.m.
 
-    Velocity of segment *i* is defined as:
-        v_i = (level[i+1] - level[i]) / (t_step[i+1] - t_step[i])
+    ``kv_result`` has ``n`` steps and ``n + 1`` levels (one mean extension
+    per plateau/segment). Velocity of transition *i* (into segment *i+1*)
+    is defined as:
+        v_i = (level[i+1] - level[i]) / dwell_time(segment i+1)
 
-    where *level[i]* is the mean extension in segment *i* and *t_step* are
-    the step times.
+    i.e. the level change is divided by how long the trace then dwelt at
+    the new level, giving ``n`` velocities -- one per transition. The very
+    first segment (before the first detected step) has no preceding
+    transition, so it doesn't contribute a velocity.
 
     Parameters
     ----------
@@ -79,7 +83,9 @@ def step_velocities(
     # Edge times: t=0 and t=last
     t_all = np.concatenate([[time[0]], t_steps, [time[-1]]])
 
-    dt = np.diff(t_all)
+    # Segment k's dwell time is t_all[k+1] - t_all[k]; drop segment 0 (no
+    # preceding transition) so dt lines up 1:1 with dx (n transitions).
+    dt = np.diff(t_all)[1:]
     dx = np.diff(levels)
     v = dx / np.where(dt > 0, dt, np.nan)
 
@@ -88,7 +94,8 @@ def step_velocities(
     mean_v = float(np.mean(moving)) if len(moving) > 0 else 0.0
     pause_frac = float(np.sum(dt[pauses]) / np.sum(dt))
 
-    t_mid = (t_all[:-1] + t_all[1:]) / 2
+    # Midpoint of the arriving segment for each transition.
+    t_mid = (t_all[1:-1] + t_all[2:]) / 2
 
     return VelocityResult(
         velocities=v,

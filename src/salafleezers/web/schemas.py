@@ -84,7 +84,7 @@ class StepFindRequest(BaseModel):
     channel: str = "extension"
     algorithm: str = "kv"     # "kv" | "hmm"
     pen_factor: float = 2.0   # KV penalty multiplier
-    n_states: int = 2         # HMM number of states
+    n_states: int = Field(default=2, ge=2, le=20)   # HMM number of states
     t_start: float | None = None
     t_end: float | None = None
 
@@ -141,14 +141,15 @@ class VelocityRequest(BaseModel):
     file_id: str
     channel: str = "extension"
     method: str = "savgol"    # "savgol" | "steps"
-    window: int = 21
-    polyorder: int = 2
+    window: int = Field(default=21, ge=3, le=100_001)
+    polyorder: int = Field(default=2, ge=0, le=10)
     step_result_id: str | None = None
 
 
 class VelocityResult(BaseModel):
     session_id: str
     file_id: str
+    result_id: str
     v_centers: list[float]
     counts: list[int]
     mean_velocity_nm_s: float
@@ -162,7 +163,7 @@ class PWDRequest(BaseModel):
     session_id: str
     file_id: str
     channel: str = "extension"
-    bins: int = 200
+    bins: int = Field(default=200, ge=2, le=20_000)
     t_start: float | None = None
     t_end: float | None = None
 
@@ -170,6 +171,7 @@ class PWDRequest(BaseModel):
 class PWDResult(BaseModel):
     session_id: str
     file_id: str
+    result_id: str
     bin_centers: list[float]
     pwd_counts: list[float]
     step_sizes: list[float]
@@ -183,16 +185,19 @@ class PWDResult(BaseModel):
 class KineticsRequest(BaseModel):
     session_id: str
     file_id: str
-    dwell_times: list[float] | None = None   # provide inline OR reference a step result
+    dwell_times: list[float] | None = Field(
+        default=None, max_length=1_000_000
+    )   # provide inline OR reference a step result
     step_result_id: str | None = None
     model: str = "exponential"               # "exponential" | "gamma"
-    n_components: int = 1
-    n_restarts: int = 3
+    n_components: int = Field(default=1, ge=1, le=10)
+    n_restarts: int = Field(default=3, ge=1, le=50)
 
 
 class KineticsResult(BaseModel):
     session_id: str
     file_id: str
+    result_id: str
     model: str
     n_components: int
     rates: list[float] | None = None
@@ -212,7 +217,7 @@ class KDERequest(BaseModel):
     session_id: str
     file_id: str
     channel: str = "extension"
-    n_points: int = 512
+    n_points: int = Field(default=512, ge=2, le=20_000)
     bandwidth: float | str = "scott"
     t_start: float | None = None
     t_end: float | None = None
@@ -221,6 +226,7 @@ class KDERequest(BaseModel):
 class KDEResult(BaseModel):
     session_id: str
     file_id: str
+    result_id: str
     x: list[float]
     density: list[float]
     bandwidth: float
@@ -232,7 +238,7 @@ class KDEResult(BaseModel):
 
 class ViolinRequest(BaseModel):
     session_id: str
-    file_ids: list[str]     # one group/violin per file
+    file_ids: list[str] = Field(min_length=1, max_length=200)   # one violin per file
     channel: str = "extension"
     bandwidth: float | str = "scott"
 
@@ -263,7 +269,7 @@ class MSDRequest(BaseModel):
     session_id: str
     file_id: str
     channel: str = "extension"
-    max_lag: int | None = None
+    max_lag: int | None = Field(default=None, ge=1, le=1_000_000)
     t_start: float | None = None
     t_end: float | None = None
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from salafleezers.web.storage import LocalFilesystemStore, UserScopedStore
+from salafleezers.web.storage import (
+    InvalidSegmentError,
+    LocalFilesystemStore,
+    UserScopedStore,
+)
 
 
 @pytest.fixture
@@ -44,6 +48,24 @@ class TestLocalFilesystemStore:
         backend.save_arrays("abc", "traces", {"x": arr})
         loaded = backend.load_arrays("abc", "traces")
         np.testing.assert_array_equal(loaded["x"], arr)
+
+    def test_rejects_path_traversal_in_session_id(self, backend, tmp_path):
+        secret = tmp_path.parent / "secret.json"
+        secret.write_text('{"leaked": true}')
+
+        with pytest.raises(InvalidSegmentError):
+            backend.save_session("../secret", {"foo": "bar"})
+        with pytest.raises(InvalidSegmentError):
+            backend.load_session("../../etc/passwd")
+        with pytest.raises(InvalidSegmentError):
+            backend.delete_session("..")
+        assert secret.read_text() == '{"leaked": true}'  # untouched
+
+    def test_rejects_path_traversal_in_array_name(self, backend):
+        with pytest.raises(InvalidSegmentError):
+            backend.save_arrays("abc", "../escaped", {"x": np.array([1.0])})
+        with pytest.raises(InvalidSegmentError):
+            backend.load_arrays("abc", "../../escaped")
 
 
 class TestUserScopedStore:
@@ -88,3 +110,17 @@ class TestUserScopedStore:
 
         assert alice.load_arrays("s1", "traces")["x"][0] == 1.0
         assert bob.load_arrays("s1", "traces")["x"][0] == 2.0
+
+    def test_session_id_cannot_traverse_into_another_users_namespace(self, backend):
+        """A crafted session_id can't collapse the user_id prefix back onto
+        another user's directory, e.g. session_id="../alice/s1" as "bob"."""
+        alice = UserScopedStore(backend, "alice")
+        bob = UserScopedStore(backend, "bob")
+        alice.save_session("s1", {"owner": "alice"})
+
+        with pytest.raises(InvalidSegmentError):
+            bob.save_session("../alice/s1", {"owner": "bob-overwrite"})
+        with pytest.raises(InvalidSegmentError):
+            bob.load_session("../alice/s1")
+
+        assert alice.load_session("s1") == {"owner": "alice"}

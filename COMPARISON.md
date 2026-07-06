@@ -1,7 +1,7 @@
 # MATLAB → Python Port: Comparison Document
 
 **Project:** SalaFleezer Optical Tweezers Data Processing  
-**MATLAB source:** `legacy/BLabOTMatlab/` (Berkeley Lab, A. Tong, GPL v3)  
+**MATLAB source:** [BLabOTMatlab](https://github.com/abmtong/BLabOTMatlab) (Berkeley Lab, A. Tong, GPL v3) — not vendored in this repo  
 **Python target:** `src/salafleezers/` (this package)
 
 ---
@@ -180,7 +180,7 @@ Key improvements the port brings:
 
 Previously listed here and since resolved: `windowFilter`/`smooth` edge handling was believed to differ from MATLAB by <1% at array edges (edge-replication vs. MATLAB's shrinking window). Golden-file testing against real MATLAB output (§6 above) showed the actual divergence was ~6-7%, and that it was a straightforward bug (wrong edge algorithm entirely, not just a rounding-level difference) — now fixed in `analysis/filters.py` and matches to floating-point precision.
 
-See `tests/golden/generate/README.md` for how these fixtures are generated and regenerated from the vendored `legacy/BLabOTMatlab/` submodule.
+See `tests/golden/generate/README.md` for how these fixtures were generated from the original MATLAB source and how to regenerate them.
 | `.h5` vs. `.mat` output | Compatible via `--save-format mat` flag | `io/writer.py` |
 
 ---

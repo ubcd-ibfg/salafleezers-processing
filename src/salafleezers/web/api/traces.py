@@ -8,30 +8,24 @@ The frontend requests higher-resolution chunks as the user zooms in.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from salafleezers.web.auth import Principal, get_current_principal
 from salafleezers.web.schemas import TraceSegment
-from salafleezers.web.sessions import LoadedFile, session_manager
-import numpy as np
+from salafleezers.web.sessions import session_manager
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
 
-def _resolve_channel(f: LoadedFile, channel: str) -> np.ndarray | None:
-    for name in (channel, channel.lower(), channel.upper()):
-        if name in f.channels:
-            return f.channels[name]
-    return None
-
-
 @router.get("/{file_id}", response_model=TraceSegment)
-async def get_trace(
+def get_trace(
     file_id: str,
     session_id: str,
     channel: str = Query("force"),
     decimate: int = Query(100, ge=1, le=100_000),
     t_start: float | None = Query(None),
     t_end: float | None = Query(None),
+    principal: Principal = Depends(get_current_principal),
 ):
     """Return a (decimated) segment of one channel.
 
@@ -39,7 +33,7 @@ async def get_trace(
     small visible windows; use ``decimate=N`` for the full-trace overview.
     """
     try:
-        session = session_manager.get(session_id)
+        session = session_manager.get_owned(session_id, principal.user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -47,12 +41,11 @@ async def get_trace(
     if f is None:
         raise HTTPException(status_code=404, detail="File not found in session")
 
-    ch = _resolve_channel(f, channel)
-    if ch is None:
+    data = f.resolve_channel64(channel)
+    if data is None:
         raise HTTPException(status_code=404, detail=f"Channel '{channel}' not found")
 
-    time = f.time.astype(np.float64)
-    data = ch.astype(np.float64)
+    time = f.time64
 
     # Crop
     if t_start is not None or t_end is not None:

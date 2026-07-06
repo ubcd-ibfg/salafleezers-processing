@@ -1,6 +1,6 @@
 """Binary .dat file reader for SalaFleezer (timeshared) optical tweezers.
 
-Ports timeshareread.m + timesharereadhdr.m from legacy/BLabOTMatlab/.
+Ports timeshareread.m + timesharereadhdr.m from the original BLabOTMatlab codebase.
 
 File layout (all big-endian):
   float64        hdrlen   — number of header doubles
@@ -54,6 +54,16 @@ class DatFile:
 # Header reader
 # ---------------------------------------------------------------------------
 
+def _read_f8_scalar(fid, path: Path, field_name: str) -> float:
+    """Read one big-endian float64, raising ValueError (not IndexError) at EOF."""
+    raw = fid.read(8)
+    if len(raw) < 8:
+        raise ValueError(
+            f"{path.name}: truncated or corrupt file (EOF reading '{field_name}')"
+        )
+    return float(np.frombuffer(raw, dtype=">f8")[0])
+
+
 def read_header(path: Path) -> tuple[dict, str, int]:
     """Read the binary header from a .dat file.
 
@@ -67,9 +77,21 @@ def read_header(path: Path) -> tuple[dict, str, int]:
         Byte offset at which QPD data begins.
     """
     with open(path, "rb") as fid:
-        hdrlen = int(np.frombuffer(fid.read(8), dtype=">f8")[0])
+        hdrlen = int(_read_f8_scalar(fid, path, "hdrlen"))
         hdr = np.frombuffer(fid.read(hdrlen * 8), dtype=">f8")
-        cmtlen = int(np.frombuffer(fid.read(8), dtype=">f8")[0])
+
+        # A truncated/corrupt file can claim a header length longer than
+        # what's actually on disk -- reading past EOF returns fewer bytes
+        # with no error, so `hdr` silently ends up shorter than `hdrlen`.
+        # Check before reading any further, since the file's remaining
+        # layout (cmtlen/comment/data) can't be trusted once this happens.
+        if len(hdr) < 13:
+            raise ValueError(
+                f"{path.name}: truncated or corrupt header "
+                f"(expected >= 13 fields, got {len(hdr)})"
+            )
+
+        cmtlen = int(_read_f8_scalar(fid, path, "cmtlen"))
         cmt = fid.read(cmtlen).decode("latin-1")
         data_offset = fid.tell()
 
@@ -95,6 +117,11 @@ def read_header(path: Path) -> tuple[dict, str, int]:
     }
 
     if dtyp == 2:  # AOM raster scan
+        if len(hdr) < 22:
+            raise ValueError(
+                f"{path.name}: truncated header for datatype 2 "
+                f"(expected >= 22 fields, got {len(hdr)})"
+            )
         meta.update({
             "scanDir": hdr[17],
             "scanRange": hdr[18],
@@ -103,6 +130,11 @@ def read_header(path: Path) -> tuple[dict, str, int]:
             "scanNScans": hdr[21],
         })
     elif dtyp == 3:  # MCL raster scan
+        if len(hdr) < 24:
+            raise ValueError(
+                f"{path.name}: truncated header for datatype 3 "
+                f"(expected >= 24 fields, got {len(hdr)})"
+            )
         meta.update({
             "scanIs2D": hdr[13],
             "scanAlongX": hdr[17],
@@ -150,7 +182,12 @@ def read_dat(path: str | Path, dtype: str = "int16", skip_fl: bool = False) -> D
     meta, cmt, _ = read_header(path)
 
     nch = meta["nChannels"]
+    if nch <= 0:
+        raise ValueError(f"{path.name}: invalid nChannels={nch} in header")
+
     dt = float(meta["Fsamp"])          # sample interval in seconds
+    if dt <= 0:
+        raise ValueError(f"{path.name}: invalid sample interval Fsamp={dt} in header")
     fs = 1.0 / dt                      # sampling frequency
     meta["Fs"] = fs
     meta["comment"] = cmt

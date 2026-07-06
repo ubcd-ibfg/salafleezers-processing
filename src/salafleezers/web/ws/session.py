@@ -33,11 +33,32 @@ from fastapi import WebSocket, WebSocketDisconnect
 from salafleezers.web.sessions import LoadedFile, Session, session_manager
 
 
-async def handle_session_ws(websocket: WebSocket, session_id: str) -> None:
+async def handle_session_ws(
+    websocket: WebSocket,
+    session_id: str,
+    user_id: str = "local",
+    allowed_origins: list[str] | None = None,
+) -> None:
+    """Accept a session WebSocket after an origin check and ownership check.
+
+    WebSocket handshakes aren't covered by ``CORSMiddleware`` (CORS is a
+    fetch/XHR-only mechanism), so without this check any web page could open
+    a socket to this endpoint and ride the browser's cookies/local network
+    access -- a cross-site WebSocket hijack. Non-browser clients typically
+    omit the ``Origin`` header entirely, so only a *present but disallowed*
+    origin is rejected; this mirrors the CORS allowlist rather than requiring
+    Origin on every connection.
+    """
+    if allowed_origins is not None:
+        origin = websocket.headers.get("origin")
+        if origin is not None and origin not in allowed_origins:
+            await websocket.close(code=4403)
+            return
+
     await websocket.accept()
 
     try:
-        session = session_manager.get(session_id)
+        session = session_manager.get_owned(session_id, user_id)
     except KeyError:
         await websocket.send_json({"type": "error", "detail": "Session not found"})
         await websocket.close(code=4004)
@@ -75,6 +96,22 @@ async def handle_session_ws(websocket: WebSocket, session_id: str) -> None:
 # Message handlers
 # ---------------------------------------------------------------------------
 
+# Unlike the REST schemas (Pydantic-validated), WS messages are raw JSON --
+# clamp every client-supplied int here so a malformed/hostile value can't
+# reach numpy as an absurd window size or slice step.
+_MAX_HALF_WIDTH = 100_000
+_MAX_DECIMATE = 1_000_000
+_MAX_CHANNELS = 50
+
+
+def _clamped_int(msg: dict, key: str, default: int, lo: int, hi: int) -> int:
+    try:
+        value = int(msg.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(hi, value))
+
+
 async def _handle_filter(ws: WebSocket, session: Session, msg: dict) -> None:
     """Apply a sliding-window filter and stream back the decimated result."""
     from salafleezers.analysis.filters import window_filter
@@ -84,10 +121,10 @@ async def _handle_filter(ws: WebSocket, session: Session, msg: dict) -> None:
         await ws.send_json({"type": "error", "detail": err})
         return
 
-    half_width = max(1, int(msg.get("half_width", 5)))
-    decimate = max(1, int(msg.get("decimate", 100)))
+    half_width = _clamped_int(msg, "half_width", 5, 1, _MAX_HALF_WIDTH)
+    decimate = _clamped_int(msg, "decimate", 100, 1, _MAX_DECIMATE)
 
-    filtered = window_filter(ch.astype(np.float64), fn="mean", half_width=half_width)
+    filtered = window_filter(ch, fn="mean", half_width=half_width)
     await ws.send_json({
         "type": "trace",
         "file_id": msg.get("file_id"),
@@ -111,16 +148,16 @@ async def _handle_crop(ws: WebSocket, session: Session, msg: dict) -> None:
     t_end = float(msg.get("t_end", f.time[-1]))
     session.crops[file_id] = (t_start, t_end)
 
-    decimate = max(1, int(msg.get("decimate", 100)))
-    channel_names = msg.get("channels", list(f.channels.keys())[:4])
+    decimate = _clamped_int(msg, "decimate", 100, 1, _MAX_DECIMATE)
+    channel_names = msg.get("channels", list(f.channels.keys())[:4])[:_MAX_CHANNELS]
 
+    time64 = f.time64   # resolved once, reused for every requested channel below
     ch_out: dict = {}
     for ch_name in channel_names:
-        ch = _resolve_channel(f, ch_name)
+        ch = f.resolve_channel64(ch_name)
         if ch is None:
             continue
-        ch_crop, t_crop = crop(ch.astype(np.float64), f.time.astype(np.float64),
-                                t_start, t_end)
+        ch_crop, t_crop = crop(ch, time64, t_start, t_end)
         ch_out[ch_name] = {
             "time": t_crop[::decimate].tolist(),
             "data": ch_crop[::decimate].tolist(),
@@ -150,8 +187,7 @@ async def _handle_measure(ws: WebSocket, session: Session, msg: dict) -> None:
         await ws.send_json({"type": "error", "detail": "'t_start' and 't_end' required"})
         return
 
-    stats = measure(ch.astype(np.float64), f.time.astype(np.float64),
-                    float(t_start), float(t_end))
+    stats = measure(ch, f.time64, float(t_start), float(t_end))
     await ws.send_json({"type": "measurement", "file_id": msg.get("file_id"), **stats})
 
 
@@ -164,9 +200,9 @@ async def _handle_decimate(ws: WebSocket, session: Session, msg: dict) -> None:
         await ws.send_json({"type": "error", "detail": err})
         return
 
-    factor = max(1, int(msg.get("factor", 100)))
-    time = f.time.astype(np.float64)
-    data = ch.astype(np.float64)
+    factor = _clamped_int(msg, "factor", 100, 1, _MAX_DECIMATE)
+    time = f.time64
+    data = ch
 
     t_start = msg.get("t_start")
     t_end = msg.get("t_end")
@@ -186,17 +222,10 @@ async def _handle_decimate(ws: WebSocket, session: Session, msg: dict) -> None:
 # Utilities
 # ---------------------------------------------------------------------------
 
-def _resolve_channel(f: LoadedFile, channel: str) -> np.ndarray | None:
-    for name in (channel, channel.lower(), channel.upper()):
-        if name in f.channels:
-            return f.channels[name]
-    return None
-
-
 def _get_channel(
     session: Session, msg: dict
 ) -> tuple[LoadedFile | None, np.ndarray | None, str | None]:
-    """Extract and resolve file + channel from a WS message.
+    """Extract and resolve file + channel (float64) from a WS message.
 
     Returns (file, array, None) on success or (None, None, error_str) on failure.
     """
@@ -207,7 +236,7 @@ def _get_channel(
     if f is None:
         return None, None, "File not found"
 
-    ch = _resolve_channel(f, channel)
+    ch = f.resolve_channel64(channel)
     if ch is None:
         return None, None, f"Channel '{channel}' not found"
 

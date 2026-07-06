@@ -11,10 +11,14 @@ real auth backend later without touching session/storage business logic.
 
 from __future__ import annotations
 
+import hmac
+import logging
 import os
 from dataclasses import dataclass
 
 from fastapi import Header, HTTPException
+
+logger = logging.getLogger(__name__)
 
 ANONYMOUS_USER_ID = "local"
 SHARED_USER_ID = "shared"
@@ -46,10 +50,12 @@ async def get_current_principal(
         return Principal(user_id=ANONYMOUS_USER_ID)
 
     if authorization is None or not authorization.startswith("Bearer "):
+        logger.warning("Rejected request with missing/malformed bearer token")
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
     presented = authorization.removeprefix("Bearer ")
-    if presented != token:
+    if not hmac.compare_digest(presented, token):
+        logger.warning("Rejected request with invalid bearer token")
         raise HTTPException(status_code=401, detail="Invalid token")
 
     return Principal(user_id=SHARED_USER_ID)

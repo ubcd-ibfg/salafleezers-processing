@@ -32,6 +32,31 @@ class TestReadHeader:
         with pytest.raises(ValueError, match="version"):
             read_header(bad)
 
+    def test_raises_on_truncated_header(self, tmp_path):
+        """hdrlen claims more fields than the file actually contains."""
+        import struct
+
+        path = tmp_path / "truncated.dat"
+        buf = bytearray()
+        buf += struct.pack(">d", 20.0)   # hdrlen claims 20 fields...
+        # ...but the file ends right after 5 fields (40 bytes), well short
+        # of the 160 bytes `read_header` will try to read.
+        buf += np.array([9.0, 1.0, 1.0 / 1000, 13.0, 2.0], dtype=">f8").tobytes()
+        path.write_bytes(bytes(buf))
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_header(path)
+
+    def test_raises_on_short_header_for_scan_datatype(self, tmp_path):
+        """dtyp==2 (AOM raster scan) needs 22 header fields for its scan
+        metadata (scanDir..scanNScans); a well-formed but honestly-13-field
+        header declaring dtyp=2 is missing them and should raise clearly
+        rather than reading garbage/out-of-bounds for the scan fields."""
+        from tests.conftest import make_dat_file
+        bad = make_dat_file(tmp_path / "scan.dat", data_type=2)
+        with pytest.raises(ValueError, match="truncated header for datatype 2"):
+            read_header(bad)
+
 
 class TestReadDat:
     def test_returns_dat_file(self, dat_path):
@@ -91,3 +116,15 @@ class TestReadDat:
         dat_p, _ = dat_with_fl
         dat = read_dat(dat_p, skip_fl=True)
         assert dat.apd1 is None
+
+    def test_raises_on_zero_channels(self, tmp_path):
+        from tests.conftest import make_dat_file
+        bad = make_dat_file(tmp_path / "zero_ch.dat", n_channels=0)
+        with pytest.raises(ValueError, match="nChannels"):
+            read_dat(bad)
+
+    def test_raises_on_invalid_sample_interval(self, tmp_path):
+        from tests.conftest import make_dat_file
+        bad = make_dat_file(tmp_path / "bad_fs.dat", fs=-1000.0)
+        with pytest.raises(ValueError, match="Fsamp"):
+            read_dat(bad)

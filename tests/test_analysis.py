@@ -77,6 +77,14 @@ class TestCrop:
         assert m["n_pts"] > 0
         assert abs(m["mean"]) < 0.01   # mean of sin over full cycle ≈ 0
 
+    def test_measure_single_point_std_is_zero_not_nan(self):
+        from salafleezers.analysis.crop import measure
+        t = np.array([0.0, 1.0, 2.0])
+        x = np.array([5.0, 7.0, 9.0])
+        m = measure(x, t, 1.0, 1.0)   # window narrow enough to catch exactly one sample
+        assert m["n_pts"] == 1
+        assert m["std"] == 0.0
+
     def test_segment_means(self):
         from salafleezers.analysis.crop import segment_means
         data = np.array([1.0] * 10 + [3.0] * 10)
@@ -214,6 +222,46 @@ class TestVelocity:
         hist = velocity_histogram(v, n_bins=50)
         assert len(hist["counts"]) == 50
         assert len(hist["v_centers"]) == 50
+
+    def test_step_velocities_shapes_match_and_recover_rate(self):
+        """n steps -> n+1 levels should yield exactly n velocities (one per
+        transition), each equal to the known level change / dwell time."""
+        from salafleezers.analysis.stepfind.kv import KVResult
+        from salafleezers.analysis.velocity import step_velocities
+
+        # Uniform time axis; steps at t=1,2,3, dwelling 1s per plateau after
+        # the first, each level rising by 8 nm -> 8 nm/s per transition.
+        time = np.linspace(0, 4, 4001)
+        step_positions = np.array([1000, 2000, 3000])
+        levels = np.array([0.0, 8.0, 16.0, 24.0])
+        kv_result = KVResult(
+            step_positions=step_positions,
+            levels=levels,
+            n_steps=3,
+            chi2=0.0,
+            step_times=time[step_positions],
+        )
+
+        result = step_velocities(kv_result, time)
+
+        assert len(result.velocities) == len(step_positions)
+        assert len(result.times) == len(result.velocities)
+        np.testing.assert_allclose(result.velocities, 8.0, rtol=1e-6)
+
+    def test_step_velocities_empty_steps(self):
+        from salafleezers.analysis.stepfind.kv import KVResult
+        from salafleezers.analysis.velocity import step_velocities
+
+        kv_result = KVResult(
+            step_positions=np.array([], dtype=np.intp),
+            levels=np.array([5.0]),
+            n_steps=0,
+            chi2=0.0,
+            step_times=np.array([]),
+        )
+        result = step_velocities(kv_result, np.linspace(0, 1, 100))
+        assert len(result.velocities) == 0
+        assert result.mean_velocity == 0.0
 
 
 # ---------------------------------------------------------------------------

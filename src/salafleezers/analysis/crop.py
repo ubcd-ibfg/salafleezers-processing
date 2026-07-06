@@ -75,9 +75,12 @@ def measure(
     seg, t = crop(data, time, t_start, t_end)
     if len(seg) == 0:
         return {"n_pts": 0, "t_start": t_start, "t_end": t_end, "duration": 0.0}
+    # ddof=1 (sample std) is undefined for a single point -- np.std would
+    # divide by zero and emit a RuntimeWarning, then return NaN (invalid JSON).
+    std = float(np.std(seg, ddof=1)) if len(seg) > 1 else 0.0
     return {
         "mean": float(np.mean(seg)),
-        "std": float(np.std(seg, ddof=1)),
+        "std": std,
         "median": float(np.median(seg)),
         "min": float(np.min(seg)),
         "max": float(np.max(seg)),

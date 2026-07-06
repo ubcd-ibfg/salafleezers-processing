@@ -7,14 +7,10 @@ that postdate that document's original scope.
 
 ## Where the MATLAB source lives
 
-`legacy/BLabOTMatlab/` is a **git submodule** pointing at the original MATLAB codebase — not a
-copied/frozen snapshot, so it can be updated if the upstream lab code changes. It's not needed
-to run `sfz` (the Python port is fully self-contained); it's only needed to regenerate golden
-fixtures — see [Testing & golden files](testing-golden-files.md).
-
-```bash
-git submodule update --init legacy/BLabOTMatlab
-```
+The original MATLAB codebase, [BLabOTMatlab](https://github.com/abmtong/BLabOTMatlab), is **not
+vendored in this repo** — the Python port is fully self-contained and doesn't need it to run
+`sfz`. It's only needed if you want to regenerate golden fixtures from scratch; clone it
+separately — see [Testing & golden files](testing-golden-files.md).
 
 ## Read `COMPARISON.md` for
 

@@ -1,27 +1,30 @@
 # Golden fixture generation
 
-Regenerates `tests/golden/fixtures/*.npz` by running the vendored MATLAB
-source (`legacy/BLabOTMatlab/`, a git submodule) under GNU Octave and
-converting its output.
+Regenerates `tests/golden/fixtures/*.npz` by running the original MATLAB
+source ([BLabOTMatlab](https://github.com/abmtong/BLabOTMatlab), cloned
+separately — not vendored in this repo) under GNU Octave and converting its
+output.
 
 ## One-time setup
 
 ```bash
+# Clone the original MATLAB source somewhere outside this repo
+git clone https://github.com/abmtong/BLabOTMatlab path/to/BLabOTMatlab
+
 # Octave (MATLAB-compatible interpreter) via conda-forge
 mamba create -n octave -c conda-forge octave
 
 # Compile the KV mex kernels for your platform (Octave's mkoctfile bakes in
 # a build-time compiler path that usually doesn't exist locally -- point it
 # at system gcc explicitly)
-cd legacy/BLabOTMatlab/DataGUIs/StepFind_KV
+cd path/to/BLabOTMatlab/DataGUIs/StepFind_KV
 CC=/usr/bin/gcc CXX=/usr/bin/g++ mamba run -n octave mkoctfile --mex C_qe.c
 CC=/usr/bin/gcc CXX=/usr/bin/g++ mamba run -n octave mkoctfile --mex C_qe_single.c
 CC=/usr/bin/gcc CXX=/usr/bin/g++ mamba run -n octave mkoctfile --mex C_qe_window.c
 ```
 
-The compiled `.mex` files are local build artifacts — do not commit them
-into the `legacy/BLabOTMatlab` submodule. Remove them when done:
-`rm legacy/BLabOTMatlab/DataGUIs/StepFind_KV/*.mex`.
+The compiled `.mex` files are local build artifacts — do not commit them.
+Remove them when done: `rm path/to/BLabOTMatlab/DataGUIs/StepFind_KV/*.mex`.
 
 ## Regenerating fixtures
 
@@ -51,7 +54,7 @@ only needed to *regenerate* fixtures, not to run the test suite.
 
 Not yet covered: HMM step-finding, velocity, PWD, kinetics, stats/KDE,
 calibration/processing (Phase 0-2 pipeline). Follow the same pattern to add
-more: find the MATLAB source under `legacy/BLabOTMatlab/`, write a
+more: find the relevant MATLAB source in a BLabOTMatlab checkout, write a
 `gen_<name>.m` with a small deterministic (or fixed-seed, for cases needing
 noise) synthetic input, add a converter entry, and a
 `test_<name>_golden.py` using `load_golden`/`assert_close` from `conftest.py`.

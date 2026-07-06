@@ -89,6 +89,55 @@ def test_openapi_json(client):
 
 
 # ---------------------------------------------------------------------------
+# App factory — CORS/body-size guardrails
+# ---------------------------------------------------------------------------
+
+def test_wildcard_origin_with_credentials_rejected_at_startup():
+    with pytest.raises(ValueError, match="allow_origins"):
+        create_app(allow_origins=["*"], serve_spa=False)
+
+
+def test_oversized_request_body_rejected(monkeypatch):
+    monkeypatch.setenv("SFZ_MAX_BODY_BYTES", "100")
+    small_limit_client = TestClient(create_app(serve_spa=False))
+
+    r = small_limit_client.post(
+        "/api/sessions/does-not-matter/save", content=b"x" * 1000
+    )
+    assert r.status_code == 413
+
+
+def test_rate_limit_disabled_by_default():
+    """Local-first default: no SFZ_RATE_LIMIT_PER_MINUTE -> unthrottled."""
+    unlimited_client = TestClient(create_app(serve_spa=False))
+    for _ in range(20):
+        r = unlimited_client.get("/api/health")
+        assert r.status_code == 200
+
+
+def test_rate_limit_enforced_when_configured(monkeypatch):
+    monkeypatch.setenv("SFZ_RATE_LIMIT_PER_MINUTE", "3")
+    limited_client = TestClient(create_app(serve_spa=False))
+
+    statuses = [limited_client.get("/api/health").status_code for _ in range(5)]
+    assert statuses[:3] == [200, 200, 200]
+    assert 429 in statuses[3:]
+
+
+def test_rate_limit_is_per_client_ip(monkeypatch):
+    monkeypatch.setenv("SFZ_RATE_LIMIT_PER_MINUTE", "1")
+    app = create_app(serve_spa=False)
+
+    client_a = TestClient(app, client=("1.2.3.4", 1234))
+    client_b = TestClient(app, client=("5.6.7.8", 5678))
+
+    assert client_a.get("/api/health").status_code == 200
+    assert client_a.get("/api/health").status_code == 429
+    # A different client IP has its own budget.
+    assert client_b.get("/api/health").status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Sessions
 # ---------------------------------------------------------------------------
 
@@ -145,7 +194,9 @@ def test_save_and_load_session_anonymous(client):
 
 def test_save_session_requires_token_when_configured(client, monkeypatch):
     monkeypatch.setenv("SFZ_AUTH_TOKEN", "s3cret")
-    sid = client.post("/api/sessions").json()["session_id"]
+    sid = client.post(
+        "/api/sessions", headers={"Authorization": "Bearer s3cret"}
+    ).json()["session_id"]
 
     r = client.post(f"/api/sessions/{sid}/save")
     assert r.status_code == 401
@@ -170,7 +221,7 @@ def test_empty_string_token_treated_as_unset(client, monkeypatch):
 
 
 def test_saved_sessions_are_namespaced_per_principal(client, monkeypatch, tmp_path):
-    """Two different principals saving the same session_id shouldn't collide."""
+    """Each principal's saved sessions land under their own disk namespace."""
     from salafleezers.web.api import sessions as sessions_module
 
     monkeypatch.setattr(
@@ -178,17 +229,31 @@ def test_saved_sessions_are_namespaced_per_principal(client, monkeypatch, tmp_pa
         sessions_module.LocalFilesystemStore(root=tmp_path),
     )
 
-    sid = client.post("/api/sessions").json()["session_id"]
-    client.post(f"/api/sessions/{sid}/save")  # anonymous principal
+    anon_sid = client.post("/api/sessions").json()["session_id"]
+    client.post(f"/api/sessions/{anon_sid}/save")  # anonymous principal
 
     monkeypatch.setenv("SFZ_AUTH_TOKEN", "s3cret")
-    r = client.post(
-        f"/api/sessions/{sid}/save", headers={"Authorization": "Bearer s3cret"}
-    )
+    shared_headers = {"Authorization": "Bearer s3cret"}
+    shared_sid = client.post(
+        "/api/sessions", headers=shared_headers
+    ).json()["session_id"]
+    r = client.post(f"/api/sessions/{shared_sid}/save", headers=shared_headers)
     assert r.status_code == 200
 
     saved_dirs = sorted(p.name for p in tmp_path.iterdir())
     assert saved_dirs == ["local", "shared"]
+
+
+def test_principal_cannot_save_another_principals_session(client, monkeypatch):
+    """A session created by one principal isn't readable/writable by another."""
+    anon_sid = client.post("/api/sessions").json()["session_id"]
+
+    monkeypatch.setenv("SFZ_AUTH_TOKEN", "s3cret")
+    r = client.post(
+        f"/api/sessions/{anon_sid}/save",
+        headers={"Authorization": "Bearer s3cret"},
+    )
+    assert r.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +290,28 @@ def test_open_file_into_existing_session(client, tmp_npz):
 def test_open_file_not_found(client):
     r = client.post("/api/files/open", json={"path": "/no/such/file.npz"})
     assert r.status_code == 404
+
+
+def test_open_file_confined_to_data_root(client, monkeypatch, tmp_npz, tmp_path):
+    """SFZ_DATA_ROOT confines /api/files/open to a directory tree."""
+    other_dir = tmp_path.parent / f"{tmp_path.name}-outside"
+    other_dir.mkdir()
+    outside_file = other_dir / "outside.npz"
+    N = 10
+    t = np.linspace(0, 1, N, dtype=np.float32)
+    np.savez(outside_file, time=t, extension=np.zeros(N, dtype=np.float32))
+
+    monkeypatch.setenv("SFZ_DATA_ROOT", str(tmp_path))
+
+    r = client.post("/api/files/open", json={"path": str(tmp_npz)})
+    assert r.status_code == 201
+
+    r = client.post("/api/files/open", json={"path": str(outside_file)})
+    assert r.status_code == 403
+
+    traversal_path = tmp_path / ".." / f"{tmp_path.name}-outside" / "outside.npz"
+    r = client.post("/api/files/open", json={"path": str(traversal_path)})
+    assert r.status_code == 403
 
 
 def test_file_info(client, tmp_npz, synthetic_session):
@@ -414,6 +501,77 @@ def test_velocity(client, synthetic_session):
     assert len(body["v_centers"]) == len(body["counts"])
 
 
+def test_velocity_steps_method(client, synthetic_session):
+    """method='steps' derives velocity from a cached stepfind result."""
+    session, file_id = synthetic_session
+    step_r = client.post("/api/stepfind", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "channel": "extension",
+        "algorithm": "kv",
+    })
+    result_id = step_r.json()["result_id"]
+
+    r = client.post("/api/velocity", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "method": "steps",
+        "step_result_id": result_id,
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert isinstance(body["v_centers"], list)
+    assert isinstance(body["counts"], list)
+
+
+def test_velocity_steps_method_requires_step_result_id(client, synthetic_session):
+    session, file_id = synthetic_session
+    r = client.post("/api/velocity", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "method": "steps",
+    })
+    assert r.status_code == 422
+
+
+def test_velocity_unknown_method(client, synthetic_session):
+    session, file_id = synthetic_session
+    r = client.post("/api/velocity", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "method": "bogus",
+    })
+    assert r.status_code == 422
+
+
+def test_velocity_results_from_different_methods_do_not_collide(client, synthetic_session):
+    """Regression: results used to be cached under bare file_id, so running
+    'savgol' then 'steps' on the same file silently overwrote the first."""
+    session, file_id = synthetic_session
+    step_r = client.post("/api/stepfind", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "channel": "extension",
+        "algorithm": "kv",
+    })
+    step_result_id = step_r.json()["result_id"]
+
+    savgol_r = client.post("/api/velocity", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "method": "savgol",
+    })
+    steps_r = client.post("/api/velocity", json={
+        "session_id": session.session_id,
+        "file_id": file_id,
+        "method": "steps",
+        "step_result_id": step_result_id,
+    })
+
+    assert savgol_r.json()["result_id"] != steps_r.json()["result_id"]
+    assert len(session.velocity_results) == 2
+
+
 # ---------------------------------------------------------------------------
 # Pairwise distance
 # ---------------------------------------------------------------------------
@@ -538,6 +696,34 @@ def test_ws_bad_session(client):
         data = ws.receive_json()
         assert data["type"] == "error"
         assert "not found" in data["detail"].lower()
+
+
+def test_ws_rejects_disallowed_origin(client, synthetic_session):
+    """A page on an origin outside the CORS allowlist can't open the socket.
+
+    WebSocket handshakes bypass CORSMiddleware entirely, so this check has
+    to happen in the handler itself -- otherwise any website could ride a
+    victim's browser to this local server (cross-site WebSocket hijack).
+    """
+    from starlette.websockets import WebSocketDisconnect
+
+    session, _ = synthetic_session
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            f"/ws/session/{session.session_id}",
+            headers={"origin": "https://evil.example.com"},
+        ):
+            pass
+
+
+def test_ws_allows_configured_origin(client, synthetic_session):
+    session, _ = synthetic_session
+    with client.websocket_connect(
+        f"/ws/session/{session.session_id}",
+        headers={"origin": "http://localhost:5173"},
+    ) as ws:
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json()["type"] == "pong"
 
 
 def test_ws_filter(client, synthetic_session):

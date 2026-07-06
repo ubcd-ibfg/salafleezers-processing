@@ -43,6 +43,19 @@ def load_file(path: Path) -> tuple[dict[str, np.ndarray], np.ndarray, dict, str]
     raise ValueError(f"Unsupported file format: '{suffix}'")
 
 
+def estimate_sampling_rate(time: np.ndarray) -> float:
+    """Sampling rate (Hz) from the first two samples of a time axis.
+
+    Falls back to 1.0 for a single-sample trace or duplicate leading
+    timestamps, where ``1 / (time[1] - time[0])`` would divide by zero
+    and produce ``inf``.
+    """
+    if len(time) < 2:
+        return 1.0
+    dt = float(time[1] - time[0])
+    return 1.0 / dt if dt > 0 else 1.0
+
+
 # ---------------------------------------------------------------------------
 # Format helpers
 # ---------------------------------------------------------------------------

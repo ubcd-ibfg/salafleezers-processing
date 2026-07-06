@@ -11,13 +11,90 @@ lets the CLI pass runtime configuration (CORS origins, SPA path, etc.).
 
 from __future__ import annotations
 
+import os
+import time
+from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import Depends, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from salafleezers.web.api import analysis, files, sessions, traces
+from salafleezers.web.auth import Principal, get_current_principal
 from salafleezers.web.ws.session import handle_session_ws
+
+_DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024   # 50 MB
+
+
+class _BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject oversized request bodies before they're buffered/parsed.
+
+    Pydantic validation (and any request.json() call) only runs after the
+    whole body has already been read into memory, so a size cap has to sit
+    in front of that -- otherwise a single request with an enormous JSON
+    array (e.g. millions of ``dwell_times``) can exhaust memory regardless
+    of the field-level bounds on the parsed model.
+    """
+
+    def __init__(self, app, max_bytes: int) -> None:
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_bytes:
+                    return PlainTextResponse("Request body too large", status_code=413)
+            except ValueError:
+                pass
+        return await call_next(request)
+
+
+class _RateLimitMiddleware(BaseHTTPMiddleware):
+    """In-memory sliding-window rate limit, per client IP.
+
+    Local-first default (no ``SFZ_RATE_LIMIT_PER_MINUTE``) leaves this
+    disabled entirely -- a single local user shouldn't be throttled against
+    themselves. For a shared-server deployment it caps how many requests
+    any one client can make per rolling 60s window.
+
+    Per-process only: each worker holds its own counters, so this isn't a
+    substitute for a shared store (Redis, etc.) in a multi-worker/multi-host
+    deployment -- a reasonable trade-off for the single-process small-lab
+    deployments this app targets.
+    """
+
+    _WINDOW_SECONDS = 60.0
+
+    def __init__(self, app, requests_per_minute: int) -> None:
+        super().__init__(app)
+        self.limit = requests_per_minute
+        self._hits: dict[str, deque[float]] = {}
+
+    async def dispatch(self, request: Request, call_next):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+
+        hits = self._hits.get(client_ip)
+        if hits is not None:
+            while hits and now - hits[0] > self._WINDOW_SECONDS:
+                hits.popleft()
+            if not hits:
+                # Evict stale keys so a long-running process doesn't
+                # accumulate one deque per distinct client forever.
+                del self._hits[client_ip]
+                hits = None
+
+        if hits is not None and len(hits) >= self.limit:
+            return PlainTextResponse("Rate limit exceeded", status_code=429)
+
+        self._hits.setdefault(client_ip, deque()).append(now)
+        return await call_next(request)
+
 
 def _find_spa_dir() -> Path:
     """Locate the built Svelte SPA.
@@ -72,9 +149,32 @@ def create_app(
         openapi_url="/api/openapi.json",
     )
 
+    origins = allow_origins if allow_origins is not None else _DEFAULT_ORIGINS
+
+    if "*" in origins:
+        # With allow_credentials=True, Starlette's CORSMiddleware reflects the
+        # request's Origin header back verbatim instead of sending a literal
+        # "*" (browsers reject credentialed "*" responses) -- so "*" here
+        # doesn't mean "any origin, no credentials", it silently means "any
+        # origin, WITH credentials". That's very unlikely to be what a
+        # deployer intended, so fail fast instead of allowing it quietly.
+        raise ValueError(
+            "allow_origins=['*'] combined with credentialed CORS allows any "
+            "origin full authenticated access; pass an explicit origin list."
+        )
+
+    max_body_bytes = int(
+        os.environ.get("SFZ_MAX_BODY_BYTES") or _DEFAULT_MAX_BODY_BYTES
+    )
+    app.add_middleware(_BodySizeLimitMiddleware, max_bytes=max_body_bytes)
+
+    rate_limit = os.environ.get("SFZ_RATE_LIMIT_PER_MINUTE")
+    if rate_limit:
+        app.add_middleware(_RateLimitMiddleware, requests_per_minute=int(rate_limit))
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allow_origins if allow_origins is not None else _DEFAULT_ORIGINS,
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -88,8 +188,14 @@ def create_app(
 
     # WebSocket
     @app.websocket("/ws/session/{session_id}")
-    async def ws_session(websocket: WebSocket, session_id: str) -> None:
-        await handle_session_ws(websocket, session_id)
+    async def ws_session(
+        websocket: WebSocket,
+        session_id: str,
+        principal: Principal = Depends(get_current_principal),
+    ) -> None:
+        await handle_session_ws(
+            websocket, session_id, principal.user_id, allowed_origins=origins
+        )
 
     # Health check
     @app.get("/api/health", tags=["meta"])

@@ -13,8 +13,9 @@ POST /api/msd            → mean-squared displacement
 from __future__ import annotations
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from salafleezers.web.auth import Principal, get_current_principal
 from salafleezers.web.schemas import (
     KDERequest,
     KDEResult,
@@ -43,9 +44,9 @@ router = APIRouter(prefix="/api", tags=["analysis"])
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _get_session(session_id: str) -> Session:
+def _get_session(session_id: str, principal: Principal) -> Session:
     try:
-        return session_manager.get(session_id)
+        return session_manager.get_owned(session_id, principal.user_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -58,10 +59,10 @@ def _get_file(session: Session, file_id: str) -> LoadedFile:
 
 
 def _resolve_channel(f: LoadedFile, channel: str) -> np.ndarray:
-    for name in (channel, channel.lower(), channel.upper()):
-        if name in f.channels:
-            return f.channels[name].astype(np.float64)
-    raise HTTPException(status_code=404, detail=f"Channel '{channel}' not found")
+    resolved = f.resolve_channel64(channel)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f"Channel '{channel}' not found")
+    return resolved
 
 
 def _crop_if_requested(data: np.ndarray, time: np.ndarray,
@@ -79,18 +80,23 @@ def _crop_if_requested(data: np.ndarray, time: np.ndarray,
 # ---------------------------------------------------------------------------
 
 @router.post("/stepfind", response_model=StepFindResult, status_code=201)
-async def run_stepfind(request: StepFindRequest):
+def run_stepfind(
+    request: StepFindRequest, principal: Principal = Depends(get_current_principal)
+):
     """Detect steps using the Kalafut-Visscher (KV) or Baum-Welch HMM algorithm."""
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
 
     data = _resolve_channel(f, request.channel)
-    time = f.time.astype(np.float64)
+    time = f.time64
     data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
 
     if request.algorithm == "kv":
         from salafleezers.analysis.stepfind.kv import find_steps
-        r = find_steps(data, time=time, pen_factor=request.pen_factor)
+        try:
+            r = find_steps(data, time=time, pen_factor=request.pen_factor)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"KV step-find failed: {exc}")
         result_id = f"{request.file_id}_stepfind_kv"
         out = StepFindResult(
             session_id=request.session_id,
@@ -106,8 +112,11 @@ async def run_stepfind(request: StepFindRequest):
 
     elif request.algorithm == "hmm":
         from salafleezers.analysis.stepfind.hmm import find_steps, hmm_to_steps
-        r = find_steps(data, n_states=request.n_states)
-        steps = hmm_to_steps(r)
+        try:
+            r = find_steps(data, n_states=request.n_states)
+            steps = hmm_to_steps(r)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"HMM step-find failed: {exc}")
         step_times = time[steps].tolist() if len(steps) > 0 else []
         result_id = f"{request.file_id}_stepfind_hmm"
         out = StepFindResult(
@@ -133,13 +142,15 @@ async def run_stepfind(request: StepFindRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/wlc/fit", response_model=WLCFitResult, status_code=201)
-async def run_wlc_fit(request: WLCFitRequest):
+def run_wlc_fit(
+    request: WLCFitRequest, principal: Principal = Depends(get_current_principal)
+):
     """Fit an extensible WLC model to a force-extension curve."""
     from salafleezers.analysis.wlc import fit_force_ext, xwlc_extension
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
-    time = f.time.astype(np.float64)
+    time = f.time64
 
     F = _resolve_channel(f, request.F_channel)
     x = _resolve_channel(f, request.x_channel)
@@ -178,26 +189,70 @@ async def run_wlc_fit(request: WLCFitRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/velocity", response_model=VelocityResult, status_code=201)
-async def run_velocity(request: VelocityRequest):
-    """Compute a velocity distribution via Savitzky-Golay differentiation."""
-    from salafleezers.analysis.velocity import savgol_velocity, velocity_histogram
+def run_velocity(
+    request: VelocityRequest, principal: Principal = Depends(get_current_principal)
+):
+    """Compute a velocity distribution: Savitzky-Golay derivative or step levels."""
+    from salafleezers.analysis.velocity import velocity_histogram
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
-    data = _resolve_channel(f, request.channel)
-    time = f.time.astype(np.float64)
+    time = f.time64
 
-    vel = savgol_velocity(data, time, window=request.window, polyorder=request.polyorder)
+    if request.method == "savgol":
+        from salafleezers.analysis.velocity import savgol_velocity
+        data = _resolve_channel(f, request.channel)
+        try:
+            vel = savgol_velocity(data, time, window=request.window,
+                                  polyorder=request.polyorder)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Savgol velocity failed: {exc}"
+            )
+        mean_v = float(np.nanmean(np.abs(vel)))
+
+    elif request.method == "steps":
+        from types import SimpleNamespace
+        from salafleezers.analysis.velocity import step_velocities
+
+        if request.step_result_id is None:
+            raise HTTPException(
+                status_code=422, detail="'step_result_id' required for method='steps'"
+            )
+        step_res = session.step_results.get(request.step_result_id)
+        if step_res is None:
+            raise HTTPException(status_code=404, detail="Step result not found")
+
+        kv_like = SimpleNamespace(
+            step_positions=np.array(step_res["step_positions"], dtype=np.intp),
+            levels=np.array(step_res["levels"], dtype=np.float64),
+        )
+        try:
+            r = step_velocities(kv_like, time)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Step velocity failed: {exc}")
+        vel = r.velocities
+        mean_v = r.mean_velocity
+
+    else:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown method '{request.method}'"
+        )
+
+    if len(vel) == 0 or not np.any(np.isfinite(vel)):
+        raise HTTPException(status_code=422, detail="No velocity samples computed")
+
     hist = velocity_histogram(vel)
-
+    result_id = f"{request.file_id}_velocity_{request.method}"
     out = VelocityResult(
         session_id=request.session_id,
         file_id=request.file_id,
+        result_id=result_id,
         v_centers=hist["v_centers"].tolist(),
         counts=hist["counts"].tolist(),
-        mean_velocity_nm_s=float(np.nanmean(np.abs(vel))),
+        mean_velocity_nm_s=mean_v,
     )
-    session.velocity_results[request.file_id] = out.model_dump()
+    session.velocity_results[result_id] = out.model_dump()
     return out
 
 
@@ -206,14 +261,16 @@ async def run_velocity(request: VelocityRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/pwd", response_model=PWDResult, status_code=201)
-async def run_pwd(request: PWDRequest):
+def run_pwd(
+    request: PWDRequest, principal: Principal = Depends(get_current_principal)
+):
     """Compute a pairwise-distance histogram."""
     from salafleezers.analysis.pwd import pairwise_distance
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
     data = _resolve_channel(f, request.channel)
-    time = f.time.astype(np.float64)
+    time = f.time64
     data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
 
     try:
@@ -221,15 +278,17 @@ async def run_pwd(request: PWDRequest):
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"PWD failed: {exc}")
 
+    result_id = f"{request.file_id}_pwd"
     out = PWDResult(
         session_id=request.session_id,
         file_id=request.file_id,
+        result_id=result_id,
         bin_centers=r.bin_centers.tolist(),
         pwd_counts=r.pwd_counts.tolist(),
         step_sizes=r.step_sizes.tolist(),
         peak_heights=r.peak_heights.tolist(),
     )
-    session.pwd_results[request.file_id] = out.model_dump()
+    session.pwd_results[result_id] = out.model_dump()
     return out
 
 
@@ -238,20 +297,22 @@ async def run_pwd(request: PWDRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/kinetics/fit", response_model=KineticsResult, status_code=201)
-async def run_kinetics(request: KineticsRequest):
+def run_kinetics(
+    request: KineticsRequest, principal: Principal = Depends(get_current_principal)
+):
     """Fit a dwell-time distribution to exponential or gamma mixtures."""
     # Obtain dwell times
     if request.dwell_times is not None:
         dwell_times = np.asarray(request.dwell_times, dtype=np.float64)
     elif request.step_result_id is not None:
-        session = _get_session(request.session_id)
+        session = _get_session(request.session_id, principal)
         step_res = session.step_results.get(request.step_result_id)
         if step_res is None:
             raise HTTPException(status_code=404, detail="Step result not found")
         from salafleezers.analysis.kinetics import extract_dwell_times
         f = _get_file(session, request.file_id)
         steps = np.array(step_res["step_positions"], dtype=np.intp)
-        dwell_times = extract_dwell_times(steps, f.time.astype(np.float64))
+        dwell_times = extract_dwell_times(steps, f.time64)
     else:
         raise HTTPException(
             status_code=422,
@@ -262,7 +323,9 @@ async def run_kinetics(request: KineticsRequest):
     if len(dwell_times) < 2:
         raise HTTPException(status_code=422, detail="Not enough dwell times to fit")
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
+
+    result_id = f"{request.file_id}_kinetics_{request.model}"
 
     if request.model == "exponential":
         from salafleezers.analysis.kinetics import fit_n_exponential
@@ -271,6 +334,7 @@ async def run_kinetics(request: KineticsRequest):
         out = KineticsResult(
             session_id=request.session_id,
             file_id=request.file_id,
+            result_id=result_id,
             model="exponential",
             n_components=request.n_components,
             rates=r.rates.tolist(),
@@ -287,6 +351,7 @@ async def run_kinetics(request: KineticsRequest):
         out = KineticsResult(
             session_id=request.session_id,
             file_id=request.file_id,
+            result_id=result_id,
             model="gamma",
             n_components=request.n_components,
             shapes=r.shapes.tolist(),
@@ -300,7 +365,7 @@ async def run_kinetics(request: KineticsRequest):
     else:
         raise HTTPException(status_code=422, detail=f"Unknown model '{request.model}'")
 
-    session.kinetics_results[request.file_id] = out.model_dump()
+    session.kinetics_results[result_id] = out.model_dump()
     return out
 
 
@@ -309,14 +374,16 @@ async def run_kinetics(request: KineticsRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/kde", response_model=KDEResult, status_code=201)
-async def run_kde(request: KDERequest):
+def run_kde(
+    request: KDERequest, principal: Principal = Depends(get_current_principal)
+):
     """Estimate a kernel density for one channel (port of kdf.m)."""
     from salafleezers.analysis.stats import kde
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
     data = _resolve_channel(f, request.channel)
-    time = f.time.astype(np.float64)
+    time = f.time64
     data, _ = _crop_if_requested(data, time, request.t_start, request.t_end)
 
     try:
@@ -324,14 +391,16 @@ async def run_kde(request: KDERequest):
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"KDE failed: {exc}")
 
+    result_id = f"{request.file_id}_kde"
     out = KDEResult(
         session_id=request.session_id,
         file_id=request.file_id,
+        result_id=result_id,
         x=r.x.tolist(),
         density=r.density.tolist(),
         bandwidth=r.bandwidth,
     )
-    session.kde_results[request.file_id] = out.model_dump()
+    session.kde_results[result_id] = out.model_dump()
     return out
 
 
@@ -340,11 +409,13 @@ async def run_kde(request: KDERequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/violin", response_model=ViolinResult, status_code=201)
-async def run_violin(request: ViolinRequest):
+def run_violin(
+    request: ViolinRequest, principal: Principal = Depends(get_current_principal)
+):
     """Compare one channel's distribution across multiple loaded files."""
     from salafleezers.analysis.stats import violin_data
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     if not request.file_ids:
         raise HTTPException(status_code=422, detail="Provide at least one file_id")
 
@@ -383,14 +454,16 @@ async def run_violin(request: ViolinRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/msd", response_model=MSDResult, status_code=201)
-async def run_msd(request: MSDRequest):
+def run_msd(
+    request: MSDRequest, principal: Principal = Depends(get_current_principal)
+):
     """Mean-squared displacement via FFT cross-correlation (port of msd*.m)."""
     from salafleezers.analysis.stats import msd_fft
 
-    session = _get_session(request.session_id)
+    session = _get_session(request.session_id, principal)
     f = _get_file(session, request.file_id)
     data = _resolve_channel(f, request.channel)
-    time = f.time.astype(np.float64)
+    time = f.time64
     data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
 
     if len(data) < 2:

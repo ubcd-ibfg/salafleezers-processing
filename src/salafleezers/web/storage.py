@@ -21,6 +21,41 @@ import numpy as np
 _DEFAULT_ROOT = Path.home() / ".salafleezers" / "sessions"
 
 
+class InvalidSegmentError(ValueError):
+    """Raised when a session_id/name would escape the storage root."""
+
+
+def _safe_segment(root: Path, *parts: str) -> Path:
+    """Join *parts* onto *root* and verify the result stays under *root*.
+
+    Rejects path traversal (``..``), absolute-path smuggling, and any other
+    segment that would resolve outside ``root`` -- e.g. a ``session_id`` of
+    ``"../shared/foo"`` arriving via a URL path parameter. Every read/write
+    in this module must route through here rather than joining raw strings.
+    """
+    candidate = root.joinpath(*parts).resolve()
+    root_resolved = root.resolve()
+    if candidate != root_resolved and not candidate.is_relative_to(root_resolved):
+        raise InvalidSegmentError(f"Invalid path segment: {parts!r}")
+    return candidate
+
+
+def _safe_name(name: str) -> str:
+    """Validate a bare filename component (the array-store ``name``).
+
+    Unlike ``session_id`` (which legitimately contains a ``/`` once
+    :class:`UserScopedStore` composes ``<user_id>/<session_id>``), ``name``
+    is always meant to be a single path segment. Without this check a
+    traversal like ``name="../other-session/traces"`` would still resolve
+    *under* the store root (so ``_safe_segment``'s containment check alone
+    wouldn't catch it) while still escaping into a sibling session's or
+    user's directory.
+    """
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
+        raise InvalidSegmentError(f"Invalid name: {name!r}")
+    return name
+
+
 class StorageBackend(Protocol):
     """Structural interface implemented by every storage backend.
 
@@ -50,14 +85,14 @@ class LocalFilesystemStore:
     # ------------------------------------------------------------------
 
     def save_session(self, session_id: str, state: dict) -> Path:
-        path = self.root / session_id / "session.json"
+        path = _safe_segment(self.root, session_id, "session.json")
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(state, f, default=str, indent=2)
         return path
 
     def load_session(self, session_id: str) -> dict:
-        path = self.root / session_id / "session.json"
+        path = _safe_segment(self.root, session_id, "session.json")
         if not path.exists():
             raise FileNotFoundError(f"Session '{session_id}' not found on disk")
         with open(path) as f:
@@ -78,7 +113,7 @@ class LocalFilesystemStore:
         ]
 
     def delete_session(self, session_id: str) -> None:
-        path = self.root / session_id
+        path = _safe_segment(self.root, session_id)
         if path.exists():
             shutil.rmtree(path)
 
@@ -88,13 +123,13 @@ class LocalFilesystemStore:
 
     def save_arrays(self, session_id: str, name: str,
                     arrays: dict[str, np.ndarray]) -> Path:
-        path = self.root / session_id / f"{name}.npz"
+        path = _safe_segment(self.root, session_id, f"{_safe_name(name)}.npz")
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(path, **arrays)
         return path
 
     def load_arrays(self, session_id: str, name: str) -> dict[str, np.ndarray]:
-        path = self.root / session_id / f"{name}.npz"
+        path = _safe_segment(self.root, session_id, f"{_safe_name(name)}.npz")
         if not path.exists():
             raise FileNotFoundError(f"Array store '{name}' not found for session '{session_id}'")
         return dict(np.load(path))
@@ -116,7 +151,13 @@ class UserScopedStore:
         self._user_id = user_id
 
     def _scoped(self, session_id: str) -> str:
-        return f"{self._user_id}/{session_id}"
+        # session_id is attacker-controlled (a URL path parameter). Reject
+        # anything but a bare segment *before* composing it with user_id --
+        # otherwise "../alice/s1" would collapse the "bob/" prefix back onto
+        # alice's namespace, even though the composed string still resolves
+        # under the overall store root (so `_safe_segment` alone wouldn't
+        # catch it).
+        return f"{self._user_id}/{_safe_name(session_id)}"
 
     def save_session(self, session_id: str, state: dict) -> Path:
         return self._backend.save_session(self._scoped(session_id), state)

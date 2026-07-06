@@ -576,13 +576,106 @@ def pwd(
 # sfz gui
 # ---------------------------------------------------------------------------
 
+def _print_security_posture(
+    *, data_root: Path | None, allow_origin: list[str] | None, rate_limit: int | None,
+) -> None:
+    """Summarize the effective security-relevant config at startup.
+
+    Nothing here is secret (never prints the auth token itself, only
+    whether one is configured) -- the point is to make the posture visible
+    rather than buried in unset env vars, especially for anyone about to
+    run this behind a reverse proxy for a shared lab.
+    """
+    import os
+
+    auth_on = bool(os.environ.get("SFZ_AUTH_TOKEN"))
+    max_body = os.environ.get("SFZ_MAX_BODY_BYTES")
+    max_sessions = os.environ.get("SFZ_MAX_SESSIONS")
+    session_ttl = os.environ.get("SFZ_SESSION_TTL_SECONDS")
+
+    table = Table(title="[bold]Security posture[/bold]", show_header=False)
+    table.add_column("Setting", style="cyan", no_wrap=True)
+    table.add_column("Value")
+
+    table.add_row(
+        "Auth",
+        "[green]bearer token required[/green]" if auth_on
+        else "[yellow]disabled (local-only)[/yellow]",
+    )
+    table.add_row(
+        "File-open data root",
+        f"[green]{data_root}[/green]" if data_root is not None
+        else "[yellow]unrestricted (any server-readable path)[/yellow]",
+    )
+    table.add_row(
+        "CORS origins",
+        ", ".join(allow_origin) if allow_origin else "built-in localhost defaults",
+    )
+    table.add_row(
+        "Rate limit",
+        f"{rate_limit} req/min per client" if rate_limit else "disabled",
+    )
+    table.add_row("Max request body", f"{max_body} bytes" if max_body else "50 MB (default)")
+    table.add_row(
+        "Session cap / TTL",
+        f"{max_sessions or 50} sessions / {session_ttl or '14400'}s",
+    )
+    console.print(table)
+
+    if not auth_on and (allow_origin or data_root or rate_limit):
+        console.print(
+            "[yellow]Note:[/yellow] auth is disabled -- these settings only matter "
+            "once SFZ_AUTH_TOKEN is also set for a shared deployment.\n"
+        )
+
+
 @app.command("gui")
 def gui(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8765,
     no_browser: Annotated[bool, typer.Option("--no-browser")] = False,
+    data_root: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--data-root",
+            help="Confine /api/files/open to this directory tree. "
+                 "Unset = unrestricted (fine for local single-user use).",
+        ),
+    ] = None,
+    allow_origin: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--allow-origin",
+            help="CORS origin to allow (repeatable). Unset = built-in "
+                 "localhost/127.0.0.1 defaults.",
+        ),
+    ] = None,
+    rate_limit: Annotated[
+        Optional[int],
+        typer.Option(
+            "--rate-limit",
+            help="Max requests per client IP per minute. Unset = unlimited.",
+        ),
+    ] = None,
+    log_level: Annotated[
+        str, typer.Option("--log-level", help="Python logging level.")
+    ] = "warning",
 ):
-    """Launch the interactive web GUI (requires `sfz[gui]` extra)."""
+    """Launch the interactive web GUI (requires `sfz[gui]` extra).
+
+    Auth is controlled by the ``SFZ_AUTH_TOKEN`` env var (not a CLI flag,
+    so the token never appears in shell history or ``ps`` output). See
+    ``--data-root``/``--allow-origin``/``--rate-limit`` for hardening a
+    shared-server deployment.
+    """
+    import logging
+    import os
+
+    logging.basicConfig(
+        level=log_level.upper(),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+
     try:
         from salafleezers.web.app import create_app  # type: ignore[import]
     except ImportError:
@@ -595,12 +688,21 @@ def gui(
     import uvicorn  # type: ignore[import]
     import webbrowser
 
-    web_app = create_app()
+    if data_root is not None:
+        os.environ["SFZ_DATA_ROOT"] = str(data_root)
+    if rate_limit is not None:
+        os.environ["SFZ_RATE_LIMIT_PER_MINUTE"] = str(rate_limit)
+
+    _print_security_posture(
+        data_root=data_root, allow_origin=allow_origin, rate_limit=rate_limit
+    )
+
+    web_app = create_app(allow_origins=allow_origin)
     url = f"http://{host}:{port}"
     if not no_browser:
         webbrowser.open(url)
     console.print(f"[bold]sfz gui[/bold]  listening on [link={url}]{url}[/link]")
-    uvicorn.run(web_app, host=host, port=port, log_level="warning")
+    uvicorn.run(web_app, host=host, port=port, log_level=log_level)
 
 
 # ---------------------------------------------------------------------------
