@@ -30,7 +30,7 @@ class TestSecurityPostureTable:
             rate_limit=120,
         )
         out = capsys.readouterr().out
-        assert "bearer token required" in out
+        assert "shared-secret bearer token" in out
         assert "/data/traces" in out
         assert "https://lab.example.com" in out
         assert "120 req/min" in out

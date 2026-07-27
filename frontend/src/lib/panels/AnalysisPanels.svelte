@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Tabs from '../ui/Tabs.svelte'
   import VelocityPanel from './VelocityPanel.svelte'
   import PwdPanel from './PwdPanel.svelte'
   import KineticsPanel from './KineticsPanel.svelte'
@@ -14,8 +15,8 @@
     stepResult,
   }: {
     channel: string
-    tStart: number | null
-    tEnd: number | null
+    tStart: number
+    tEnd: number
     stepResult: StepFindResult | null
   } = $props()
 
@@ -32,32 +33,22 @@
   ]
 </script>
 
-<div class="card" style="margin-top:8px;">
-  <div class="row" style="gap:4px; margin-bottom:8px;">
-    {#each tabs as t (t.id)}
-      <button class:active={tab === t.id} onclick={() => (tab = t.id)}>{t.label}</button>
-    {/each}
+<div class="card" style="margin-top: 8px;">
+  <Tabs {tabs} active={tab} onSelect={(id) => (tab = id)} />
+
+  <div style="margin-top: var(--s-2);">
+    {#if tab === 'velocity'}
+      <VelocityPanel {channel} {tStart} {tEnd} />
+    {:else if tab === 'pwd'}
+      <PwdPanel {channel} {tStart} {tEnd} />
+    {:else if tab === 'kinetics'}
+      <KineticsPanel {stepResult} />
+    {:else if tab === 'kde'}
+      <KdePanel {channel} {tStart} {tEnd} />
+    {:else if tab === 'violin'}
+      <ViolinPanel {tStart} {tEnd} />
+    {:else if tab === 'msd'}
+      <MsdPanel {channel} {tStart} {tEnd} />
+    {/if}
   </div>
-
-  {#if tab === 'velocity'}
-    <VelocityPanel {channel} />
-  {:else if tab === 'pwd'}
-    <PwdPanel {channel} {tStart} {tEnd} />
-  {:else if tab === 'kinetics'}
-    <KineticsPanel {stepResult} />
-  {:else if tab === 'kde'}
-    <KdePanel {channel} {tStart} {tEnd} />
-  {:else if tab === 'violin'}
-    <ViolinPanel />
-  {:else if tab === 'msd'}
-    <MsdPanel {channel} {tStart} {tEnd} />
-  {/if}
 </div>
-
-<style>
-  button.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-  }
-</style>

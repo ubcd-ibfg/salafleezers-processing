@@ -37,7 +37,7 @@ def get_trace(
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    f = session.files.get(file_id)
+    f = session.get_file(file_id)
     if f is None:
         raise HTTPException(status_code=404, detail="File not found in session")
 

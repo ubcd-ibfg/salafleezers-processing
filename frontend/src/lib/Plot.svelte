@@ -1,12 +1,15 @@
 <script lang="ts">
   import uPlot from 'uplot'
   import { onMount, onDestroy } from 'svelte'
+  import { theme } from './stores/theme.svelte'
+  import { themedAxes } from './theme/plot'
 
   let {
     data,
     series,
     height = 300,
     scales,
+    axes,
     onZoom,
     onSelect,
     cursor = true,
@@ -16,6 +19,7 @@
     series: uPlot.Series[]
     height?: number
     scales?: uPlot.Scales
+    axes?: uPlot.Axis[]
     onZoom?: (min: number, max: number) => void
     onSelect?: (min: number, max: number) => void
     cursor?: boolean
@@ -33,6 +37,7 @@
       height,
       series,
       scales,
+      axes: axes ?? themedAxes(),
       cursor: cursor
         ? {
             drag: {
@@ -79,9 +84,13 @@
     return () => ro.disconnect()
   })
 
-  // Rebuild whenever the series definition changes (e.g. channel selection).
+  // Rebuild whenever the series definition changes (e.g. channel selection)
+  // or the theme flips -- axis/grid/tick colors are drawn on canvas, so
+  // (unlike the DOM-based legend, themed via CSS in app.css) they can only
+  // be re-themed by rebuilding with fresh computed colors.
   $effect(() => {
     series
+    theme.current
     if (container) {
       destroy()
       build()

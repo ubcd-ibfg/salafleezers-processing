@@ -1,7 +1,6 @@
 # Calibration & trap stiffness
 
-Implemented in `salafleezers.calibration` (`power_spectrum.py`, `lorentzian.py`, `fit.py`),
-ported from `tscalibrate.m` / `Lorentzian.m` / `tscalibrate_lorentzguess.m`.
+Implemented in `salafleezers.calibration` (`power_spectrum.py`, `lorentzian.py`, `fit.py`).
 
 ## Pipeline
 
@@ -18,9 +17,8 @@ signal (see [Force & extension](force-extension.md) for what "normalized" means)
    *linear* in \(f^2\), a single `lstsq` line fit through \((f^2,\,1/S)\) gives closed-form
    \(f_c\) and \(D\) starting guesses — no iteration needed, and it can't fail to converge.
 4. **Nonlinear fit** (`fit_lorentzian`) — refines \((f_c, D)\) via
-   `scipy.optimize.least_squares` in log-space (mirrors MATLAB's `lsqnonlin` on log-residuals,
-   which weights the fit evenly across the whole log-log spectrum rather than being dominated
-   by the largest-magnitude low-frequency points).
+   `scipy.optimize.least_squares` in log-space, which weights the fit evenly across the whole
+   log-log spectrum rather than being dominated by the largest-magnitude low-frequency points.
 5. **Physical conversion** — turns the fit's \((f_c, D_{\text{fit}})\) (in raw detector-voltage
    units) into \(\alpha\) (nm/V) and \(\kappa\) (pN/nm).
 

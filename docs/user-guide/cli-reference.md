@@ -131,7 +131,7 @@ Options:
 ```
 
 See [Force & extension](../physics/force-extension.md) for what these three methods mean
-physically, and why only `basic` is golden-tested against the original MATLAB `XWLC.m`.
+physically, and why only `basic` is golden-tested.
 
 ## `sfz velocity`
 

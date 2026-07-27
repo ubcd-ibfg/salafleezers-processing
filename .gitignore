@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Local environment overrides (see .env.example)
+.env
+docker-compose.override.yml
+
 # data Not commit data
 data/*
 

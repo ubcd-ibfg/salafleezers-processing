@@ -8,7 +8,7 @@ To record a new golden fixture from MATLAB output:
   3. Write a test that calls ``load_golden(name)`` and compares the Python
      output to ``golden["expected_<field>"]``.
 
-The tolerance targets are documented in COMPARISON.md:
+Tolerance targets:
   < 0.1 % RMS in the bulk of the signal
   < 1 %  at trace edges (first / last few samples)
 """

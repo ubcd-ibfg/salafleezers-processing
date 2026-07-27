@@ -1,7 +1,6 @@
 # Dwell-time kinetics
 
-Implemented in `salafleezers.analysis.kinetics`, port of `fitnexp*.m` / `ngamdist*.m` /
-`phage_dwelldist.m`.
+Implemented in `salafleezers.analysis.kinetics`.
 
 ## Why fit a distribution instead of just averaging
 

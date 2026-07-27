@@ -7,8 +7,7 @@ this instrument exists to make. Two algorithms are implemented,
 
 ## Kalafut-Visscher (KV)
 
-Port of `AFindStepsV5.m` / `BatchKV.m`. Reference: Kalafut & Visscher,
-*Comput. Phys. Commun.* **179**, 716-723 (2008).
+Reference: Kalafut & Visscher, *Comput. Phys. Commun.* **179**, 716-723 (2008).
 
 The idea: model the trace as a piecewise-constant staircase, and greedily decide whether adding
 another step is justified by how much it reduces the fit's residual sum of squares
@@ -24,40 +23,21 @@ complexity (a Schwarz/Bayesian Information Criterion, SIC/BIC):
 
 Both passes repeat until nothing changes.
 
-### The penalty — two different parameterizations
+### The penalty
 
-This is the one place where the Python port's numerics **don't directly correspond** to
-MATLAB's, even though the algorithm is the same — worth understanding if you're translating a
-`pen_factor` you're used to from one implementation to the other (see
-[Testing & golden files](../developer/testing-golden-files.md) for how this was discovered and
-what was actually validated).
-
-**MATLAB** (`AFindStepsV5.m`) derives a *relative* threshold on the fractional decrease in QE.
-Starting from the SIC criterion \((k+2)p + \log n + n\log(QE/n)\), comparing a fit with \(i\)
-vs. \(i+1\) steps simplifies (since only the QE term differs materially) to accepting a step
-when:
-\[
-\frac{\Delta QE}{QE_i} < P = e^{-p/n} - 1
-\]
-where \(p\) is the raw penalty (`single(k)` in MATLAB means "\(k\times\) the default",
-default \(p=\ln(n)\)) and \(n\) is the segment length.
-
-**Python** (`stepfind/kv.py::find_steps`) instead uses an *absolute* threshold directly on
-\(\chi^2\) improvement:
+`stepfind/kv.py::find_steps` uses an *absolute* threshold directly on \(\chi^2\) improvement — a
+fixed BIC-like penalty term:
 \[
 \text{penalty} = \text{pen\_factor} \cdot \sigma^2 \cdot \ln N
 \]
-where \(\sigma^2 = \text{var(data)}\) and \(N\) is the full trace length — a fixed BIC-like
-penalty rather than one that rescales per-segment with the current fit residual.
-
-Both are legitimate SIC/BIC-flavored penalties for the same algorithm, but `pen_factor=2.0` in
-Python is **not** numerically equivalent to `single(2)` in MATLAB. If you're trying to match a
-specific MATLAB analysis's step count, don't assume the same number carries over — tune it
-empirically against your data instead.
+where \(\sigma^2 = \text{var(data)}\) and \(N\) is the full trace length. A split is accepted
+only if it reduces total \(\chi^2\) by more than this penalty; `pen_factor` (default 2.0) is the
+knob that trades sensitivity (more, smaller steps found) against false positives — tune it
+empirically against your data.
 
 ## HMM (Hidden Markov Model)
 
-Port of `fitViterbi*.m` / `findStepHMM*.m`. Models the trace as \(K\) discrete states, each
+Models the trace as \(K\) discrete states, each
 emitting a Gaussian signal \(p(x\mid\text{state}=k) = \mathcal{N}(x;\mu_k,\sigma_k)\), with
 transitions between states governed by a \(K\times K\) transition matrix. Unlike KV (which
 discovers the number of steps automatically), HMM requires you to specify \(K\) (`--n-states`)
@@ -73,7 +53,7 @@ existing step-find rather than discovering structure from scratch).
 
 ## Which to use
 
-KV is the default, and is what's golden-tested against real MATLAB output. HMM is useful when
+KV is the default, and is what's golden-tested against an independently computed reference. HMM is useful when
 you have a strong prior on the number of states (e.g. a system with a known number of discrete
 conformations) and want the noise model to be explicit rather than emergent from the greedy
 penalty. Both are exposed identically through the CLI (`sfz stepfind --algorithm kv|hmm`) and

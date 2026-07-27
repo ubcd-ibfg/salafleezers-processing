@@ -7,10 +7,8 @@
 The SalaFleezer instrument records raw QPD voltage traces in binary `.dat` files. This repository provides the end-to-end processing workflow: loading and validating raw traces, calibrating trap stiffness with Lorentzian power-spectrum fitting, and converting detector signals into force (pN) and extension (nm) outputs for downstream single-molecule analysis. The project is organized into three pillars:
 
 - A **CLI** (`sfz`) — inspect, calibrate, batch-process, and run every analysis routine headlessly.
-- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA trace/force-extension viewer that replaces the MATLAB `DataGUIs`.
+- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA for interactively browsing traces, fitting force-extension curves, and running every analysis routine, with browser upload as the primary way to get data in.
 - A **documentation site** — user guide, physics & methods, and developer guide.
-
-> See [COMPARISON.md](COMPARISON.md) for a full table of MATLAB → Python library changes and their trade-offs, and [docs/ROADMAP.md](docs/ROADMAP.md) for the phased build-out (all 6 phases complete).
 
 ---
 
@@ -102,7 +100,7 @@ Calibrating 230415_003.dat  (Fs = 62500 Hz)
 
 ### 3. Process a batch of files
 
-Create a plain-text batch file (same format as the original MATLAB `AProcessDataV2.m`):
+Create a plain-text batch file:
 
 ```text
 # batch.txt
@@ -130,7 +128,7 @@ Outputs one `ForceExtension230415_NNN.h5` file per data file. Use `--save-format
 
 ### 4. Run analysis headlessly
 
-Each analysis routine ported from `DataGUIs` is available as its own subcommand, operating on an already-processed HDF5/npz file (the output of `sfz process`):
+Each analysis routine is available as its own subcommand, operating on an already-processed HDF5/npz file (the output of `sfz process`):
 
 ```bash
 # Step-finding (Kalafut-Visscher or HMM) on the extension channel
@@ -172,20 +170,27 @@ the browser tab just stays blank.)
 uv run sfz gui
 ```
 
-This starts a local FastAPI server (default `http://127.0.0.1:8765`) serving the Svelte SPA — a **TraceViewer** (filter/crop/measure, step overlays, undo/redo, PNG export, keyboard shortcuts) and a **ForceExtensionViewer** (WLC fit overlay + residuals), plus tabbed analysis panels for velocity, pairwise distance, dwell-time kinetics, kernel density, and violin/MSD comparisons. Sessions (loaded files, crops, fits, view state) save/load to disk and survive a restart.
+This starts a local FastAPI server (default `http://127.0.0.1:8765`) serving the Svelte SPA — drag files or a folder onto the page to load data (no path to type, no server-side configuration required), then a **TraceViewer** (filter/crop/measure, step overlays, undo/redo, PNG export, keyboard shortcuts) and a **ForceExtensionViewer** (WLC fit overlay + residuals), plus tabbed analysis panels for velocity, pairwise distance, dwell-time kinetics, kernel density, and violin/MSD comparisons. Sessions (loaded files, crops, fits, view state) save/load to disk and survive a restart; uploaded data lives in a durable per-user workspace under `~/.salafleezers/uploads/`.
 
 ```text
 Options:
   --host          Bind address                 [default: 127.0.0.1]
   --port          Bind port                     [default: 8765]
   --no-browser    Don't auto-open a browser tab
-  --data-root     Confine /api/files/open to a directory tree (unset = unrestricted)
+  --data-root     Confine legacy path-based /api/files/open to a directory tree
+                  (unset = unrestricted; doesn't affect uploads, which are
+                  always confined to the caller's own workspace)
   --allow-origin  CORS origin to allow (repeatable)
   --rate-limit    Max requests per client IP per minute (unset = unlimited)
   --log-level     Python logging level          [default: warning]
 ```
 
-Auth for a small shared-lab deployment is controlled by the `SFZ_AUTH_TOKEN` environment variable (not a CLI flag, so it never appears in shell history): unset means anonymous single-user mode; set it and every request needs a matching `Authorization: Bearer <token>` header. See [`src/salafleezers/web/auth.py`](src/salafleezers/web/auth.py).
+Auth for a small shared-lab deployment is controlled by two environment variables (not CLI flags, so neither appears in shell history):
+
+- `SFZ_AUTH_TOKEN` — a shared-secret bearer-token gate. Unset means anonymous single-user mode; set it and every request needs a matching `Authorization: Bearer <token>` header (the SPA prompts for it). This *authenticates* but does not *identify* — everyone with the token shares one workspace.
+- `SFZ_TRUSTED_USER_HEADER` — the name of a header set by an authenticating reverse proxy (oauth2-proxy, Authelia, Cloudflare Access) carrying the caller's identity. Set this to give each person their own isolated sessions and upload workspace. Only enable it behind a proxy that overwrites the header rather than forwarding a client-supplied value.
+
+See [`src/salafleezers/web/auth.py`](src/salafleezers/web/auth.py).
 
 See the [GUI walkthrough](docs/user-guide/gui-walkthrough.md) for a full tour with screenshots.
 
@@ -193,14 +198,15 @@ See the [GUI walkthrough](docs/user-guide/gui-walkthrough.md) for a full tour wi
 
 ### 6. Run with Docker
 
-A multi-stage `Dockerfile` (Node build → Python runtime) and `docker-compose.yml` are provided for a containerized deployment:
+A multi-stage `Dockerfile` (Node build → Python runtime) and `docker-compose.yml` are provided for a containerized deployment. Nothing is required to get a usable instance running — data goes in via upload:
 
 ```bash
-export SFZ_DATA_DIR=/path/to/your/trace-files   # mounted read-only at /data in the container
 docker compose up --build
 ```
 
-The GUI is then reachable at `http://localhost:8765`. Sessions persist in a named volume (`sfz-sessions`) across container replacement. Set `SFZ_AUTH_TOKEN` in the environment to enable the shared-secret auth gate.
+The GUI is then reachable at `http://localhost:8765` by default (override the host port with `SFZ_PORT` in a `.env` file, see `.env.example`). Sessions and uploaded data persist in a named volume (`sfz-sessions`) across container replacement. Set `SFZ_AUTH_TOKEN`/`SFZ_TRUSTED_USER_HEADER` in the environment to harden a shared deployment (see `.env.example`).
+
+To also reach files already on the host by server path (the legacy flow, useful for scripted workflows), copy `docker-compose.override.yml.example` to `docker-compose.override.yml` and set `SFZ_DATA_DIR`.
 
 ---
 
@@ -304,13 +310,18 @@ See the [Physics & Methods](docs/physics/optical-trapping.md) book for the maths
 salafleezers-processing/
 ├── pyproject.toml              — package metadata, [gui]/[docs]/[dev] extras
 ├── main.py                     — thin entry point (delegates to sfz CLI)
-├── COMPARISON.md                — MATLAB → Python change log with pros/cons
 ├── README.md                   — this file
 ├── Dockerfile / docker-compose.yml  — containerized deployment (multi-stage build)
+├── docker-compose.override.yml.example  — optional legacy server-path file access
 ├── mkdocs.yml                  — MkDocs Material site config
-├── docs/                       — User Guide / Physics & Methods / Developer Guide + ROADMAP.md
+├── docs/                       — User Guide / Physics & Methods / Developer Guide
 ├── frontend/                   — Svelte 5 + Vite + TS SPA (uPlot plotting)
-│   └── dist/                   — built assets, force-included into the wheel
+│   ├── dist/                   — built assets, force-included into the wheel
+│   └── src/lib/
+│       ├── data/                — upload intake: dropzone, upload queue, dataset rail
+│       ├── ui/                  — shared primitives (RunButton/useRun, Card, Tabs)
+│       ├── theme/               — theme-aware chart color resolution
+│       └── panels/              — the six analysis tabs
 ├── src/salafleezers/
 │   ├── constants.py            — instrument constants, channel maps
 │   ├── io/
@@ -341,13 +352,14 @@ salafleezers-processing/
 │   │   └── main.py             — sfz inspect/calibrate/process/stepfind/wlc-fit/velocity/pwd/gui
 │   └── web/                     — FastAPI backend (optional `gui` extra)
 │       ├── app.py              — app factory, mounts the built SPA
-│       ├── api/                 — REST routers (files, sessions, traces, analysis)
+│       ├── api/                 — REST routers (files, uploads, sessions, traces, analysis)
 │       ├── ws/session.py       — WebSocket for live filter/crop/measure/decimate
 │       ├── schemas.py          — pydantic request/response models
-│       ├── sessions.py         — session state (loaded files, crops, fits, view state)
-│       ├── storage.py          — storage backends (local filesystem, user-scoped)
-│       └── auth.py             — anonymous-by-default / opt-in bearer-token auth
-└── tests/                       — unit tests + tests/golden/ MATLAB regression fixtures
+│       ├── sessions.py         — session state: durable file refs + a byte-bounded array cache
+│       ├── workspace.py        — per-user durable upload storage (browser drag-and-drop intake)
+│       ├── storage.py          — session persistence backends (local filesystem, user-scoped)
+│       └── auth.py             — anonymous-by-default / bearer-token / proxy-identity auth
+└── tests/                       — unit tests + tests/golden/ numerical regression fixtures
 ```
 
 ---
@@ -360,7 +372,13 @@ uv run pytest -v            # verbose output
 uv run pytest --cov=src     # with coverage report
 ```
 
-154 tests pass, covering the I/O, calibration, processing, analysis, CLI, and web (REST + WebSocket) layers. Most use synthetic `.dat` fixtures generated entirely in memory — no real instrument files required. `tests/golden/` additionally checks numerical parity against the real MATLAB source (run under GNU Octave); see [Testing & golden files](docs/developer/testing-golden-files.md) for how to regenerate fixtures and the known coverage gaps (HMM, velocity, PWD, kinetics, and the calibration/processing pipeline aren't golden-tested yet).
+The suite covers the I/O, calibration, processing, analysis, CLI, and web (REST + WebSocket)
+layers, plus upload intake and multi-user isolation. Most tests use synthetic `.dat` fixtures
+generated entirely in memory — no real instrument files required. `tests/golden/` additionally
+checks numerical parity against reference outputs generated independently under GNU Octave; see
+[Testing & golden files](docs/developer/testing-golden-files.md) for how to regenerate fixtures
+and the known coverage gaps (HMM, velocity, PWD, kinetics, and the calibration/processing
+pipeline aren't golden-tested yet).
 
 ---
 
@@ -431,6 +449,7 @@ Optional (`[gui]` extra):
 | `websockets ≥ 12.0` | Live trace interaction |
 | `pydantic ≥ 2.7` | API request/response schemas |
 | `matplotlib ≥ 3.9` | Power spectrum plots (`--plot` flag) |
+| `python-multipart ≥ 0.0.9` | Multipart parsing for browser file uploads |
 
 Optional (`[docs]` extra): `mkdocs-material`, `mkdocstrings[python]`.
 Optional (`[dev]` extra): `pytest`, `pytest-cov`, `pytest-asyncio`, `httpx`, `ruff`, `mypy`, `hypothesis`.
@@ -441,10 +460,4 @@ The Svelte SPA in `frontend/` has its own `package.json` (Svelte 5, Vite, TypeSc
 
 ## License
 
-This Python port is released under the same terms as the original MATLAB codebase: **GNU General Public License v3**.
-
----
-
-## Acknowledgments
-
-This project is a Python port of an optical tweezers data processing and analysis pipeline originally written in MATLAB by **A. Tong** (Berkeley Lab), released under the GNU General Public License v3. This port would not exist without that original work.
+Released under the **GNU General Public License v3**.

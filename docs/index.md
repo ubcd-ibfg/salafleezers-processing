@@ -2,9 +2,7 @@
 
 ![SalaFleezers logo](assets/logo/salafleezers_logo_small.png){ width="200" align="right" }
 
-A MATLAB-free optical-tweezers data processing and analysis platform, replacing the
-BLab's [`BLabOTMatlab`](https://github.com/abmtong/BLabOTMatlab) `RawDataProcessing` +
-`DataGUIs` codebase with Python.
+An optical-tweezers data processing and analysis platform, in pure Python.
 
 This site has three books:
 
@@ -13,26 +11,30 @@ This site has three books:
 - **[Physics & Methods](physics/optical-trapping.md)** — the "why": optical trapping basics,
   trap-stiffness calibration, force/extension models, and the maths behind every analysis
   routine (step-finding, velocity, pairwise distance, dwell-time kinetics).
-- **[Developer Guide](developer/architecture.md)** — architecture, the MATLAB→Python mapping,
-  how to add a new analysis module, the API reference, and the golden-file testing strategy.
+- **[Developer Guide](developer/architecture.md)** — architecture, how to add a new analysis
+  module, the API reference, and the golden-file testing strategy.
 
-## What this replaces
+## Structure of the code
 
-The original MATLAB codebase's biggest maintenance burden was
-[`DataGUIs/PhageGUIv4.m`](https://github.com/abmtong/BLabOTMatlab/blob/master/DataGUIs/PhageGUIv4.m)
-and
-[`ForExtGUI_V2.m`](https://github.com/abmtong/BLabOTMatlab/blob/master/DataGUIs/ForExtGUI_V2.m)
-— two large, monolithic, MATLAB-GUI-only interactive analysis tools with no headless path and no
-tests. `sfz` replaces both with:
+`sfz` is organized into three complementary layers:
 
 - A **CLI** (`sfz inspect|calibrate|process|stepfind|wlc-fit|velocity|pwd|gui`) that runs
   anywhere Python runs — SSH, HPC, CI — with no display.
-- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA — for the interactive trace
-  viewing and force-extension analysis that made the lab dependent on MATLAB in the first
-  place.
-- A **pure-NumPy analysis library** (`salafleezers.analysis`) that both of the above call into,
-  so every number the GUI shows you is reproducible from a script or a notebook.
+- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA — for interactive trace viewing
+  and force-extension analysis.
+- A **pure-NumPy analysis library** (`salafleezers.analysis`) used by both interfaces, so every
+  number shown in the GUI is reproducible from a script or notebook.
 
-See `COMPARISON.md` in the repo root for the full MATLAB→Python library mapping and every known
-behavioral difference, several of which were found and fixed by testing against the real
-MATLAB source under Octave — see [Testing & golden files](developer/testing-golden-files.md).
+For implementation details and testing strategy, see
+[Testing & golden files](developer/testing-golden-files.md).
+
+## Worked examples
+
+[`examples/`](https://github.com/ubcd-ibfg/salafleezers-processing/tree/main/examples) holds
+full worked examples built on top of `salafleezers.analysis` — code for analyses specific to one
+assay that don't belong in the general-purpose library or GUI. Currently:
+
+- **[`rnap_nuc_crossing/`](https://github.com/ubcd-ibfg/salafleezers-processing/tree/main/examples/rnap_nuc_crossing)**
+  — the full RNAP–nucleosome-crossing-with-a-molecular-ruler workflow, end to end. Walked
+  through step by step, both from scripts and from `sfz gui`, in
+  [RNAP nucleosome crossing](user-guide/rnap-nucleosome-crossing.md).

@@ -51,15 +51,17 @@ All three formats hold the same fields (see `ProcessedData.to_dict()` in
 `processing/pipeline.py`): `time`, `force`, `extension`, per-axis force channels, and the
 calibration constants (`fc`, `alpha`, `kappa`, `D`) for each trap/axis.
 
-Both the CLI's `stepfind`/`wlc-fit`/`velocity`/`pwd` commands and the web GUI's "Open file"
-accept any of these three formats — see `web/io.py::load_file` for the format dispatch used by
-the GUI, and note it also accepts a bare `.npz` with just `time` + named channel arrays (which
-is exactly what the golden-file test fixtures and this project's own smoke tests use, so you
-don't need real instrument hardware to try the GUI).
+The CLI's `stepfind`/`wlc-fit`/`velocity`/`pwd` commands accept `.h5`/`.hdf5`/`.hdf` and `.npz`.
+The web GUI's file-open path (upload or, for scripted use, a server path) accepts `.dat`,
+`.h5`/`.hdf5`/`.hdf`, and `.npz` — **not** `.mat`, which is currently write-only. See
+`web/io.py::load_file` for the format dispatch used by the GUI; it also accepts a bare `.npz`
+with just `time` + named channel arrays (which is exactly what the golden-file test fixtures and
+this project's own smoke tests use, so you don't need real instrument hardware to try the GUI).
+Reading `.mat` is tracked as a future improvement.
 
 ## Web GUI channel model
 
 Internally the GUI treats every file as `{time: float32[N], channels: {name: float32[N], …}}` —
-this is the same shape whether it came from a `.dat`, `.h5`, `.mat`, or `.npz` file, which is
-what lets one `TraceSegment`/`TracePreview` API model serve all of them (see
+this is the same shape whether it came from a `.dat`, `.h5`, or `.npz` file, which is what lets
+one `TraceSegment`/`TracePreview` API model serve all of them (see
 [API reference](../developer/api-reference.md)).

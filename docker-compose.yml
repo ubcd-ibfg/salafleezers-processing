@@ -2,18 +2,30 @@ services:
   sfz-gui:
     build: .
     ports:
-      - "8765:8765"
+      - "${SFZ_PORT:-8765}:8765"
     volumes:
+      # Sessions and the per-user upload workspace live here -- the only
+      # volume required to run. Data gets into the GUI by dragging files or a
+      # folder into the browser; see docker-compose.override.yml.example for
+      # the optional legacy "open by server path" flow.
       - sfz-sessions:/root/.salafleezers
-      # Point SFZ_DATA_DIR at your local trace-file directory so `sfz gui`'s
-      # "Open file" can reach files by path inside the container, e.g.
-      # /data/230415_001.dat. No default: the repo's own data/ isn't yours.
-      - ${SFZ_DATA_DIR:?set SFZ_DATA_DIR to your local trace-file directory}:/data:ro
     environment:
-      # Set to enable the shared-secret auth gate for a shared-lab
-      # deployment (see src/salafleezers/web/auth.py). Leave unset for
-      # single-user local-first use.
+      # Set to enable the shared-secret auth gate (see web/auth.py). Leave
+      # unset for single-user local-first use.
       SFZ_AUTH_TOKEN: ${SFZ_AUTH_TOKEN:-}
+      # Header carrying the end-user identity, set by an authenticating
+      # reverse proxy (oauth2-proxy, Authelia, Cloudflare Access). Setting
+      # this gives each person their own isolated sessions and upload
+      # workspace instead of everyone sharing one principal. The proxy MUST
+      # overwrite this header rather than forward a client-supplied value.
+      SFZ_TRUSTED_USER_HEADER: ${SFZ_TRUSTED_USER_HEADER:-}
+      # Upload limits (see web/workspace.py). Per file / per user total.
+      SFZ_MAX_UPLOAD_BYTES: ${SFZ_MAX_UPLOAD_BYTES:-}
+      SFZ_MAX_WORKSPACE_BYTES: ${SFZ_MAX_WORKSPACE_BYTES:-}
+      # Ceiling on parsed trace arrays held in memory across all sessions
+      # (see web/sessions.py ArrayCache). Arrays are a cache in front of
+      # durable storage, so eviction is never destructive.
+      SFZ_MAX_CACHE_BYTES: ${SFZ_MAX_CACHE_BYTES:-}
 
 volumes:
   sfz-sessions:

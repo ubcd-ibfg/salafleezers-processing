@@ -1,7 +1,6 @@
 # Pairwise-distance (PWD) method
 
-Implemented in `salafleezers.analysis.pwd`, port of `calcPWDV1b.m` / `sumPWD*.m` /
-`findPWDpeaks.m` / `acorr2.m`.
+Implemented in `salafleezers.analysis.pwd`.
 
 ## The idea
 

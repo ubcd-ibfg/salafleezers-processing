@@ -1,5 +1,17 @@
 // Mirrors src/salafleezers/web/schemas.py — keep in sync with the backend.
 
+export interface HealthInfo {
+  status: string
+  version: string
+  auth_required: boolean
+  max_upload_bytes: number
+}
+
+export interface WsTicket {
+  ticket: string
+  expires_in: number
+}
+
 export interface SessionInfo {
   session_id: string
   created_at: string
@@ -8,7 +20,10 @@ export interface SessionInfo {
 }
 
 export interface FileOpenRequest {
-  path: string
+  // Exactly one of `path` or (`dataset_id` + `relative_path`).
+  path?: string | null
+  dataset_id?: string | null
+  relative_path?: string | null
   session_id?: string | null
 }
 
@@ -67,6 +82,11 @@ export interface StepFindResult {
   step_times: number[]
   levels: number[]
   chi2: number | null
+  // The range this result was computed over -- downstream consumers
+  // (velocity method="steps", kinetics) must re-apply the same range before
+  // indexing a time axis with step_positions.
+  t_start?: number | null
+  t_end?: number | null
 }
 
 export type WLCMethod = 'basic' | 'marko_siggia' | 'bouchiat'
@@ -108,6 +128,8 @@ export interface VelocityRequest {
   window?: number
   polyorder?: number
   step_result_id?: string | null
+  t_start?: number | null
+  t_end?: number | null
 }
 
 export interface VelocityResult {
@@ -185,6 +207,8 @@ export interface ViolinRequest {
   file_ids: string[]
   channel?: string
   bandwidth?: number | string
+  t_start?: number | null
+  t_end?: number | null
 }
 
 export interface ViolinGroup {
@@ -231,4 +255,34 @@ export interface MeasurementResult {
   t_start: number
   t_end: number
   duration: number
+}
+
+// ---------------------------------------------------------------------------
+// Uploads (browser-side data intake — see web/workspace.py)
+// ---------------------------------------------------------------------------
+
+export type UploadEntryKind = 'trace' | 'sidecar' | 'batch' | 'skipped'
+
+export interface UploadEntry {
+  relative_path: string
+  size_bytes: number
+  kind: UploadEntryKind
+  parent: string | null
+  sidecars: string[]
+  missing_sidecars: string[]
+  warning: string | null
+}
+
+export interface Dataset {
+  dataset_id: string
+  name: string
+  created_at: string
+  finalized: boolean
+  total_bytes: number
+  entries: UploadEntry[]
+}
+
+export interface UploadedFileInfo {
+  relative_path: string
+  size_bytes: number
 }

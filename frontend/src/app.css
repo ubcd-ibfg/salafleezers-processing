@@ -1,40 +1,87 @@
 @import 'uplot/dist/uPlot.min.css';
 
+/* ---------------------------------------------------------------------------
+ * Design tokens
+ *
+ * Technical/editorial direction: hairline rules instead of shadowed cards,
+ * uppercase tracked micro-labels, near-square corners, monospace for
+ * anything numeric. Dark values live only here -- previously this block was
+ * duplicated verbatim between a `[data-theme='dark']` rule and a
+ * `prefers-color-scheme` media query; the pre-paint script in index.html now
+ * stamps `data-theme` before first render, so only one block is needed.
+ * ------------------------------------------------------------------------- */
+
 :root {
+  --bg: #ffffff;
+  --bg-elev: #fbfbfc;
+  --bg-panel: #f7f7f8;
   --text: #3a3742;
   --text-h: #08060d;
-  --bg: #fff;
-  --bg-panel: #f7f7f9;
+  --text-dim: #8b8894;
   --border: #e5e4e7;
+  --border-strong: #c9c8ce;
   --accent: #7c3aed;
-  --accent-bg: rgba(124, 58, 237, 0.1);
+  --accent-fg: #ffffff;
+  --accent-bg: rgba(124, 58, 237, 0.08);
   --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.08);
+  --warn: #b45309;
+  --warn-bg: rgba(180, 83, 9, 0.1);
+  --ok: #15803d;
+
+  --series-1: #7c3aed;
+  --series-2: #0e7490;
+  --series-3: #b45309;
+  --series-4: #be123c;
+  --series-5: #15803d;
+  --series-6: #1d4ed8;
+
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --mono: ui-monospace, 'SF Mono', Consolas, monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  --radius-sm: 2px;
+  --radius: 4px;
+
+  --rail-width: 260px;
 }
 
 :root[data-theme='dark'] {
+  --bg: #16171d;
+  --bg-elev: #1a1b22;
+  --bg-panel: #1d1e26;
   --text: #d1d3da;
   --text-h: #f3f4f6;
-  --bg: #16171d;
-  --bg-panel: #1d1e26;
+  --text-dim: #8a8c98;
   --border: #2e303a;
+  --border-strong: #3f4250;
   --accent: #c084fc;
-  --accent-bg: rgba(192, 132, 252, 0.15);
+  --accent-fg: #16171d;
+  --accent-bg: rgba(192, 132, 252, 0.14);
   --danger: #f87171;
-}
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.12);
+  --ok: #34d399;
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --text: #d1d3da;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --bg-panel: #1d1e26;
-    --border: #2e303a;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --danger: #f87171;
-  }
+  --series-1: #c084fc;
+  --series-2: #22d3ee;
+  --series-3: #fbbf24;
+  --series-4: #fb7185;
+  --series-5: #4ade80;
+  --series-6: #60a5fa;
 }
 
 * {
@@ -48,7 +95,7 @@ body {
 }
 
 body {
-  font: 14px/1.45 var(--sans);
+  font: var(--text-md) / 1.45 var(--sans);
   color: var(--text);
   background: var(--bg);
 }
@@ -57,6 +104,12 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+h1, h2, h3, h4 {
+  color: var(--text-h);
+  font-weight: 600;
+  margin: 0;
 }
 
 button,
@@ -70,7 +123,7 @@ textarea {
 button {
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 6px 12px;
   cursor: pointer;
 }
@@ -79,10 +132,38 @@ button:hover {
   border-color: var(--accent);
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
+}
+
+button.danger {
+  background: var(--bg-panel);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button.danger:hover {
+  background: var(--danger-bg);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+button.ghost:hover {
+  border-color: var(--border);
 }
 
 button:disabled {
@@ -91,33 +172,62 @@ button:disabled {
 }
 
 input[type='text'],
-input[type='number'] {
+input[type='number'],
+input[type='password'],
+select {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 5px 8px;
 }
 
 label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
+/* Uppercase, letter-spaced micro-label -- the recurring "section header"
+   treatment throughout the app (card titles, rail groups, field groups). */
+.label {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 .card {
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--radius);
+  padding: var(--s-3);
 }
 
 .row {
   display: flex;
-  gap: 12px;
+  gap: var(--s-3);
   align-items: end;
   flex-wrap: wrap;
+}
+
+.row-center {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Vertical rhythm utility -- replaces the ~15 `style="margin-top:8px"`
+   inline strings that were the dominant layout mechanism. */
+.stack > * + * {
+  margin-top: var(--s-2);
+}
+
+.stack-lg > * + * {
+  margin-top: var(--s-3);
 }
 
 .mono {
@@ -127,4 +237,47 @@ label {
 .muted {
   color: var(--text);
   opacity: 0.65;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.text-warn {
+  color: var(--warn);
+}
+
+/* Shared tab strip -- previously the "active" treatment was defined twice
+   (Nav.svelte and AnalysisPanels.svelte, byte-identical). */
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* uPlot chrome (DOM parts only -- axis/grid/tick colors are canvas-drawn
+   and set programmatically via theme/plot.ts; this covers the legend and
+   selection rectangle, which ARE DOM and CSS-stylable). */
+.u-legend {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.u-legend th {
+  font-weight: 500;
+}
+
+.u-select {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent);
 }

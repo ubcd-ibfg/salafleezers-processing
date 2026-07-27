@@ -12,6 +12,10 @@ POST /api/msd            → mean-squared displacement
 
 from __future__ import annotations
 
+import os
+import threading
+from contextlib import contextmanager
+
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -41,6 +45,77 @@ router = APIRouter(prefix="/api", tags=["analysis"])
 
 
 # ---------------------------------------------------------------------------
+# Resource guards
+# ---------------------------------------------------------------------------
+#
+# Analysis runs synchronously inside the request (there is no job queue), so
+# nothing here is free: a client that hangs up does NOT stop the computation.
+# Two guards keep that from turning into accidental denial-of-service on a
+# shared server, and they matter more than a client-side "cancel" button:
+#
+#   1. A hard input-size cap, because Kalafut-Visscher is worst-case O(N^2)
+#      (see analysis/stepfind/kv.py) -- a full-resolution 62.5 kHz trace is
+#      minutes of CPU, and the honest answer is to refuse and tell the caller
+#      to narrow the range rather than accept and stall.
+#   2. A per-principal concurrency cap, so one user can't occupy every
+#      threadpool slot and make the app unresponsive for everyone else.
+
+_DEFAULT_MAX_STEPFIND_SAMPLES = 2_000_000
+_DEFAULT_MAX_CONCURRENT_PER_USER = 2
+
+
+def _max_stepfind_samples() -> int:
+    return int(
+        os.environ.get("SFZ_MAX_STEPFIND_SAMPLES") or _DEFAULT_MAX_STEPFIND_SAMPLES
+    )
+
+
+def _max_concurrent_per_user() -> int:
+    return int(
+        os.environ.get("SFZ_MAX_CONCURRENT_ANALYSES") or _DEFAULT_MAX_CONCURRENT_PER_USER
+    )
+
+
+_slots_lock = threading.Lock()
+_slots: dict[str, threading.Semaphore] = {}
+
+
+@contextmanager
+def _analysis_slot(user_id: str):
+    """Limit how many analyses one principal can run at once.
+
+    Returns 429 rather than queueing: the caller is a UI that should say "one
+    at a time", and an unbounded queue would just move the stall.
+    """
+    with _slots_lock:
+        sem = _slots.get(user_id)
+        if sem is None:
+            sem = threading.Semaphore(_max_concurrent_per_user())
+            _slots[user_id] = sem
+
+    if not sem.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many analyses already running for this user; wait for one to finish",
+        )
+    try:
+        yield
+    finally:
+        sem.release()
+
+
+def _guard_sample_count(n: int, limit: int, what: str) -> None:
+    if n > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{what} over {n:,} samples exceeds the {limit:,}-sample limit. "
+                "Zoom in or apply a crop to narrow the analysis range."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
@@ -52,7 +127,8 @@ def _get_session(session_id: str, principal: Principal) -> Session:
 
 
 def _get_file(session: Session, file_id: str) -> LoadedFile:
-    f = session.files.get(file_id)
+    """Fetch a file's arrays, rehydrating from its durable ref on a cache miss."""
+    f = session.get_file(file_id)
     if f is None:
         raise HTTPException(status_code=404, detail="File not found in session")
     return f
@@ -90,48 +166,56 @@ def run_stepfind(
     data = _resolve_channel(f, request.channel)
     time = f.time64
     data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
+    _guard_sample_count(len(data), _max_stepfind_samples(), "Step detection")
 
-    if request.algorithm == "kv":
-        from salafleezers.analysis.stepfind.kv import find_steps
-        try:
-            r = find_steps(data, time=time, pen_factor=request.pen_factor)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"KV step-find failed: {exc}")
-        result_id = f"{request.file_id}_stepfind_kv"
-        out = StepFindResult(
-            session_id=request.session_id,
-            file_id=request.file_id,
-            result_id=result_id,
-            algorithm="kv",
-            n_steps=r.n_steps,
-            step_positions=r.step_positions.tolist(),
-            step_times=r.step_times.tolist(),
-            levels=r.levels.tolist(),
-            chi2=float(r.chi2),
-        )
+    with _analysis_slot(principal.user_id):
+        if request.algorithm == "kv":
+            from salafleezers.analysis.stepfind.kv import find_steps
+            try:
+                r = find_steps(data, time=time, pen_factor=request.pen_factor)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=f"KV step-find failed: {exc}")
+            result_id = f"{request.file_id}_stepfind_kv"
+            out = StepFindResult(
+                session_id=request.session_id,
+                file_id=request.file_id,
+                result_id=result_id,
+                algorithm="kv",
+                n_steps=r.n_steps,
+                step_positions=r.step_positions.tolist(),
+                step_times=r.step_times.tolist(),
+                levels=r.levels.tolist(),
+                chi2=float(r.chi2),
+                t_start=request.t_start,
+                t_end=request.t_end,
+            )
 
-    elif request.algorithm == "hmm":
-        from salafleezers.analysis.stepfind.hmm import find_steps, hmm_to_steps
-        try:
-            r = find_steps(data, n_states=request.n_states)
-            steps = hmm_to_steps(r)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"HMM step-find failed: {exc}")
-        step_times = time[steps].tolist() if len(steps) > 0 else []
-        result_id = f"{request.file_id}_stepfind_hmm"
-        out = StepFindResult(
-            session_id=request.session_id,
-            file_id=request.file_id,
-            result_id=result_id,
-            algorithm="hmm",
-            n_steps=len(steps),
-            step_positions=steps.tolist(),
-            step_times=step_times,
-            levels=r.means.tolist(),
-        )
+        elif request.algorithm == "hmm":
+            from salafleezers.analysis.stepfind.hmm import find_steps, hmm_to_steps
+            try:
+                r = find_steps(data, n_states=request.n_states)
+                steps = hmm_to_steps(r)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=f"HMM step-find failed: {exc}")
+            step_times = time[steps].tolist() if len(steps) > 0 else []
+            result_id = f"{request.file_id}_stepfind_hmm"
+            out = StepFindResult(
+                session_id=request.session_id,
+                file_id=request.file_id,
+                result_id=result_id,
+                algorithm="hmm",
+                n_steps=len(steps),
+                step_positions=steps.tolist(),
+                step_times=step_times,
+                levels=r.means.tolist(),
+                t_start=request.t_start,
+                t_end=request.t_end,
+            )
 
-    else:
-        raise HTTPException(status_code=422, detail=f"Unknown algorithm '{request.algorithm}'")
+        else:
+            raise HTTPException(
+                status_code=422, detail=f"Unknown algorithm '{request.algorithm}'"
+            )
 
     session.step_results[out.result_id] = out.model_dump()
     return out
@@ -202,6 +286,11 @@ def run_velocity(
     if request.method == "savgol":
         from salafleezers.analysis.velocity import savgol_velocity
         data = _resolve_channel(f, request.channel)
+        # Honour the caller's analysis range, as every other endpoint does.
+        # Without this, zooming into a region and clicking through the analysis
+        # tabs gave this one panel an answer computed over the whole trace,
+        # with nothing on screen indicating the mismatch.
+        data, time = _crop_if_requested(data, time, request.t_start, request.t_end)
         try:
             vel = savgol_velocity(data, time, window=request.window,
                                   polyorder=request.polyorder)
@@ -223,12 +312,18 @@ def run_velocity(
         if step_res is None:
             raise HTTPException(status_code=404, detail="Step result not found")
 
+        # step_positions index into the array the step-find ran on, so re-apply
+        # that result's own crop before indexing -- using the full time axis
+        # here silently attributed each step to the wrong timestamp.
+        _, step_time = _crop_if_requested(
+            time, time, step_res.get("t_start"), step_res.get("t_end")
+        )
         kv_like = SimpleNamespace(
             step_positions=np.array(step_res["step_positions"], dtype=np.intp),
             levels=np.array(step_res["levels"], dtype=np.float64),
         )
         try:
-            r = step_velocities(kv_like, time)
+            r = step_velocities(kv_like, step_time)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Step velocity failed: {exc}")
         vel = r.velocities
@@ -312,7 +407,11 @@ def run_kinetics(
         from salafleezers.analysis.kinetics import extract_dwell_times
         f = _get_file(session, request.file_id)
         steps = np.array(step_res["step_positions"], dtype=np.intp)
-        dwell_times = extract_dwell_times(steps, f.time64)
+        # Same crop-alignment requirement as velocity method="steps" above.
+        _, step_time = _crop_if_requested(
+            f.time64, f.time64, step_res.get("t_start"), step_res.get("t_end")
+        )
+        dwell_times = extract_dwell_times(steps, step_time)
     else:
         raise HTTPException(
             status_code=422,
@@ -422,7 +521,12 @@ def run_violin(
     groups: dict[str, np.ndarray] = {}
     for fid in request.file_ids:
         f = _get_file(session, fid)
-        groups[f.filename] = _resolve_channel(f, request.channel)
+        data = _resolve_channel(f, request.channel)
+        # Crop per file against its own time axis: files in a comparison can
+        # have different sampling rates and durations, so a shared sample
+        # index would not describe the same window in each.
+        data, _ = _crop_if_requested(data, f.time64, request.t_start, request.t_end)
+        groups[f.filename] = data
 
     try:
         result = violin_data(groups, bandwidth=request.bandwidth)

@@ -588,24 +588,39 @@ def _print_security_posture(
     """
     import os
 
-    auth_on = bool(os.environ.get("SFZ_AUTH_TOKEN"))
+    from salafleezers.web.workspace import (
+        max_upload_bytes,
+        max_workspace_bytes,
+        workspace_store,
+    )
+
+    token_on = bool(os.environ.get("SFZ_AUTH_TOKEN"))
+    trusted_header = os.environ.get("SFZ_TRUSTED_USER_HEADER")
     max_body = os.environ.get("SFZ_MAX_BODY_BYTES")
     max_sessions = os.environ.get("SFZ_MAX_SESSIONS")
     session_ttl = os.environ.get("SFZ_SESSION_TTL_SECONDS")
+    max_cache = os.environ.get("SFZ_MAX_CACHE_BYTES")
 
     table = Table(title="[bold]Security posture[/bold]", show_header=False)
     table.add_column("Setting", style="cyan", no_wrap=True)
     table.add_column("Value")
 
-    table.add_row(
-        "Auth",
-        "[green]bearer token required[/green]" if auth_on
-        else "[yellow]disabled (local-only)[/yellow]",
-    )
+    if trusted_header:
+        auth_desc = f"[green]per-user identity via '{trusted_header}' header[/green]"
+    elif token_on:
+        auth_desc = "[yellow]shared-secret bearer token (single shared identity)[/yellow]"
+    else:
+        auth_desc = "[yellow]disabled (local-only)[/yellow]"
+    table.add_row("Auth", auth_desc)
     table.add_row(
         "File-open data root",
         f"[green]{data_root}[/green]" if data_root is not None
         else "[yellow]unrestricted (any server-readable path)[/yellow]",
+    )
+    table.add_row("Upload workspace", str(workspace_store.root))
+    table.add_row(
+        "Upload limits",
+        f"{max_upload_bytes():,} bytes/file, {max_workspace_bytes():,} bytes/user",
     )
     table.add_row(
         "CORS origins",
@@ -620,12 +635,21 @@ def _print_security_posture(
         "Session cap / TTL",
         f"{max_sessions or 50} sessions / {session_ttl or '14400'}s",
     )
+    table.add_row("Array cache budget", f"{max_cache} bytes" if max_cache else "4 GB (default)")
     console.print(table)
 
-    if not auth_on and (allow_origin or data_root or rate_limit):
+    if not (token_on or trusted_header) and (allow_origin or data_root or rate_limit):
         console.print(
             "[yellow]Note:[/yellow] auth is disabled -- these settings only matter "
-            "once SFZ_AUTH_TOKEN is also set for a shared deployment.\n"
+            "once SFZ_AUTH_TOKEN or SFZ_TRUSTED_USER_HEADER is also set for a shared "
+            "deployment.\n"
+        )
+    if token_on and not trusted_header:
+        console.print(
+            "[yellow]Note:[/yellow] SFZ_AUTH_TOKEN authenticates but does not "
+            "distinguish users -- everyone with the token shares one workspace. "
+            "Set SFZ_TRUSTED_USER_HEADER behind an identity-aware proxy to isolate "
+            "individual users.\n"
         )
 
 

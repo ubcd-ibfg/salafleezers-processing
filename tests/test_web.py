@@ -16,7 +16,7 @@ import pytest
 
 # Import the app factory + internals we'll manipulate in tests
 from salafleezers.web.app import create_app
-from salafleezers.web.sessions import LoadedFile, Session, session_manager
+from salafleezers.web.sessions import FileRef, LoadedFile, Session, session_manager
 
 from fastapi.testclient import TestClient
 
@@ -50,26 +50,25 @@ def synthetic_session():
     force = rng.uniform(5.0, 25.0, N).astype(np.float32)
 
     file_id = str(uuid.uuid4())
-    session = Session(
-        session_id=str(uuid.uuid4()),
-        created_at=datetime.now(),
-        files={
-            file_id: LoadedFile(
-                file_id=file_id,
-                filename="test.npz",
-                path="/tmp/test.npz",
-                n_samples=N,
-                sampling_rate_hz=1000.0,
-                channels={"extension": extension, "force": force},
-                time=t,
-                meta={"fs": 1000},
-            )
-        },
+    session = Session(session_id=str(uuid.uuid4()), created_at=datetime.now())
+    session.add_file(
+        file_id,
+        FileRef(kind="path", path="/tmp/test.npz"),
+        LoadedFile(
+            file_id=file_id,
+            filename="test.npz",
+            path="/tmp/test.npz",
+            n_samples=N,
+            sampling_rate_hz=1000.0,
+            channels={"extension": extension, "force": force},
+            time=t,
+            meta={"fs": 1000},
+        ),
     )
     session_manager._sessions[session.session_id] = session
     yield session, file_id
     # Clean up
-    session_manager._sessions.pop(session.session_id, None)
+    session_manager.delete(session.session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -440,28 +439,27 @@ def wlc_session():
     t = np.arange(N, dtype=np.float32)
 
     file_id = str(uuid.uuid4())
-    session = Session(
-        session_id=str(uuid.uuid4()),
-        created_at=datetime.now(),
-        files={
-            file_id: LoadedFile(
-                file_id=file_id,
-                filename="wlc.npz",
-                path="/tmp/wlc.npz",
-                n_samples=N,
-                sampling_rate_hz=1.0,
-                channels={
-                    "force": F.astype(np.float32),
-                    "extension": x.astype(np.float32),
-                },
-                time=t,
-                meta={},
-            )
-        },
+    session = Session(session_id=str(uuid.uuid4()), created_at=datetime.now())
+    session.add_file(
+        file_id,
+        FileRef(kind="path", path="/tmp/wlc.npz"),
+        LoadedFile(
+            file_id=file_id,
+            filename="wlc.npz",
+            path="/tmp/wlc.npz",
+            n_samples=N,
+            sampling_rate_hz=1.0,
+            channels={
+                "force": F.astype(np.float32),
+                "extension": x.astype(np.float32),
+            },
+            time=t,
+            meta={},
+        ),
     )
     session_manager._sessions[session.session_id] = session
     yield session, file_id
-    session_manager._sessions.pop(session.session_id, None)
+    session_manager.delete(session.session_id)
 
 
 def test_wlc_fit(client, wlc_session):
@@ -572,6 +570,59 @@ def test_velocity_results_from_different_methods_do_not_collide(client, syntheti
     assert len(session.velocity_results) == 2
 
 
+def test_velocity_honors_crop_range(client, synthetic_session):
+    """Regression: VelocityRequest previously had no t_start/t_end fields at
+    all, so zooming into a region and running Velocity silently answered
+    over the whole trace while its PWD/KDE/MSD neighbours honoured the crop."""
+    session, file_id = synthetic_session
+    full = client.post("/api/velocity", json={
+        "session_id": session.session_id, "file_id": file_id, "channel": "extension",
+    }).json()
+    cropped = client.post("/api/velocity", json={
+        "session_id": session.session_id, "file_id": file_id, "channel": "extension",
+        "t_start": 0.0, "t_end": 2.0,
+    }).json()
+    assert sum(cropped["counts"]) < sum(full["counts"])
+
+
+def test_step_positions_align_with_cropped_time_downstream(client, synthetic_session):
+    """Regression: step_positions index into the array the step-find ran on.
+    velocity(method='steps') and kinetics used the session's FULL time axis
+    to look them up regardless of what range the antecedent step-find used --
+    silently attributing every step to the wrong timestamp whenever that
+    step-find was itself cropped. This reconstructs what the "steps" branch
+    computes internally and checks it reproduces the step-find's own
+    (correctly-cropped) step_times exactly.
+    """
+    from salafleezers.analysis.crop import crop as crop_fn
+
+    session, file_id = synthetic_session
+    t_start, t_end = 2.0, 8.0
+    step_r = client.post("/api/stepfind", json={
+        "session_id": session.session_id, "file_id": file_id,
+        "channel": "extension", "algorithm": "kv",
+        "t_start": t_start, "t_end": t_end,
+    })
+    body = step_r.json()
+    assert body["t_start"] == t_start and body["t_end"] == t_end
+
+    # Matches synthetic_session's own construction (see fixture above).
+    full_time = np.linspace(0, 10, 10_000, dtype=np.float32).astype(np.float64)
+    _, expected_cropped_time = crop_fn(full_time, full_time, t_start, t_end)
+
+    reconstructed = expected_cropped_time[np.array(body["step_positions"], dtype=np.intp)]
+    np.testing.assert_allclose(reconstructed, body["step_times"], rtol=1e-5)
+
+    # And the downstream "steps" velocity/kinetics consumers must not error
+    # when fed a cropped step result.
+    r = client.post("/api/velocity", json={
+        "session_id": session.session_id, "file_id": file_id,
+        "method": "steps", "step_result_id": body["result_id"],
+    })
+    assert r.status_code == 201
+    assert np.isfinite(r.json()["mean_velocity_nm_s"])
+
+
 # ---------------------------------------------------------------------------
 # Pairwise distance
 # ---------------------------------------------------------------------------
@@ -642,6 +693,23 @@ def test_violin(client, synthetic_session):
     assert g["label"] == "test.npz"
     assert g["n"] == 10_000
     assert len(g["x"]) == len(g["density"])
+
+
+def test_violin_honors_crop_range(client, synthetic_session):
+    """Regression: ViolinRequest previously had no t_start/t_end fields, so
+    this was the other analysis endpoint (with Velocity) that silently used
+    a different data range than its PWD/KDE/MSD neighbours."""
+    session, file_id = synthetic_session
+    full = client.post("/api/violin", json={
+        "session_id": session.session_id, "file_ids": [file_id], "channel": "extension",
+    }).json()
+    cropped = client.post("/api/violin", json={
+        "session_id": session.session_id, "file_ids": [file_id], "channel": "extension",
+        "t_start": 0.0, "t_end": 2.0,
+    }).json()
+    assert full["groups"][0]["n"] == 10_000
+    # t spans [0, 10] over 10,000 samples, so [0, 2] is ~2,000 samples.
+    assert 1_500 < cropped["groups"][0]["n"] < 2_500
 
 
 def test_violin_missing_files(client, synthetic_session):

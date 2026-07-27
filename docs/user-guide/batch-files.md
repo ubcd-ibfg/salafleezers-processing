@@ -1,7 +1,6 @@
 # Batch files
 
-`sfz process` takes a plain-text batch file — the same format as the original MATLAB
-`AProcessDataV2.m` used, so existing lab batch files work unchanged:
+`sfz process` takes a plain-text batch file:
 
 ```text
 # batch.txt

@@ -1,0 +1,19 @@
+# Optional: reach files already on this host by server path, without
+# uploading them first (the legacy "Open file" flow). Dragging files or a
+# folder into the browser works with zero configuration and is the normal
+# path -- this is only useful for scripted/CLI workflows or very large
+# pre-existing archives you'd rather not re-upload.
+#
+# Copy this file to docker-compose.override.yml and set SFZ_DATA_DIR to
+# enable it; `docker compose` merges docker-compose.override.yml
+# automatically. Leaving it absent (the default) keeps the base
+# docker-compose.yml fully self-contained -- `docker compose up` with no
+# .env at all starts and is usable via upload.
+
+services:
+  sfz-gui:
+    volumes:
+      - ${SFZ_DATA_DIR:?set SFZ_DATA_DIR to your local trace-file directory}:/data:ro
+    environment:
+      # Confines path-based opens to the mount above.
+      SFZ_DATA_ROOT: /data

@@ -1,19 +1,24 @@
 <script lang="ts">
   import type uPlot from 'uplot'
   import Plot from '../Plot.svelte'
-  import { api, ApiError } from '../api'
+  import RunButton from '../ui/RunButton.svelte'
+  import { api } from '../api'
   import { session } from '../stores/session.svelte'
-  import type { ViolinGroup } from '../types'
+  import { theme } from '../stores/theme.svelte'
+  import { seriesColor } from '../theme/plot'
+  import { useRun } from '../ui/useRun.svelte'
+  import type { ViolinGroup, ViolinResult } from '../types'
 
-  const PALETTE = ['#7c3aed', '#059669', '#d97706', '#dc2626', '#2563eb', '#0891b2']
+  let { tStart, tEnd }: { tStart: number; tEnd: number } = $props()
+
   const GRID_POINTS = 256
 
   let selectedFiles = $state<string[]>([])
   let channel = $state('extension')
   let bandwidth = $state('scott')
-  let running = $state(false)
-  let error = $state('')
   let groups = $state<ViolinGroup[]>([])
+
+  const runState = useRun<ViolinResult>()
 
   $effect(() => {
     if (session.activeFileId && !selectedFiles.length) {
@@ -29,25 +34,24 @@
 
   async function run() {
     if (!selectedFiles.length) {
-      error = 'Select at least one file'
+      runState.error = 'Select at least one file'
       return
     }
-    running = true
-    error = ''
-    try {
-      const bwValue = bandwidth === 'scott' || bandwidth === 'silverman' ? bandwidth : Number(bandwidth)
-      const r = await api.violin({
-        session_id: session.sessionId!,
-        file_ids: selectedFiles,
-        channel,
-        bandwidth: bwValue,
-      })
-      groups = r.groups
-    } catch (e) {
-      error = e instanceof ApiError ? `${e.status}: ${e.message}` : String(e)
-    } finally {
-      running = false
-    }
+    const bwValue = bandwidth === 'scott' || bandwidth === 'silverman' ? bandwidth : Number(bandwidth)
+    const r = await runState.run((signal) =>
+      api.violin(
+        {
+          session_id: session.sessionId!,
+          file_ids: selectedFiles,
+          channel,
+          bandwidth: bwValue,
+          t_start: tStart,
+          t_end: tEnd,
+        },
+        { signal },
+      ),
+    )
+    if (r) groups = r.groups
   }
 
   function interpOrZero(xq: number, xs: number[], ys: number[]): number {
@@ -80,16 +84,19 @@
     return [x, ...groups.map((g) => x.map((xq) => interpOrZero(xq, g.x, g.density)))] as uPlot.AlignedData
   })
 
-  let plotSeries = $derived.by((): uPlot.Series[] => [
-    {},
-    ...groups.map((g, i) => ({ label: g.label, stroke: PALETTE[i % PALETTE.length], width: 1.5, points: { show: false } })),
-  ])
+  let plotSeries = $derived.by((): uPlot.Series[] => {
+    theme.current
+    return [
+      {},
+      ...groups.map((g, i) => ({ label: g.label, stroke: seriesColor(i), width: 1.5, points: { show: false } })),
+    ]
+  })
 </script>
 
 <div class="row">
   <div>
-    <span class="muted" style="display:block; font-size:12px;">Files (one density curve each)</span>
-    <div class="row" style="gap:6px;">
+    <span class="label">Files (one density curve each)</span>
+    <div class="row-center" style="margin-top: 4px;">
       {#each session.files as f (f.file_id)}
         <label style="flex-direction: row; align-items: center; gap: 4px;">
           <input type="checkbox" checked={selectedFiles.includes(f.file_id)} onchange={() => toggleFile(f.file_id)} />
@@ -113,18 +120,17 @@
       <option value="silverman">Silverman</option>
     </select>
   </label>
-  <button class="primary" onclick={run} disabled={running}>{running ? 'Running…' : 'Compare distributions'}</button>
-  {#if error}<span style="color: var(--danger)">{error}</span>{/if}
+  <RunButton state={runState} label="Compare distributions" onRun={run} />
 </div>
 
 {#if groups.length}
-  <div style="margin-top:8px;">
+  <div style="margin-top: 8px;">
     <Plot data={plotData} series={plotSeries} height={240} cursor={false} />
   </div>
-  <table class="mono" style="margin-top:8px; width:100%; border-collapse: collapse; font-size:12px;">
+  <table class="mono" style="margin-top: 8px; width: 100%; border-collapse: collapse; font-size: var(--text-xs);">
     <thead>
       <tr>
-        <th style="text-align:left;">file</th>
+        <th style="text-align: left;">file</th>
         <th>n</th>
         <th>median</th>
         <th>Q25</th>

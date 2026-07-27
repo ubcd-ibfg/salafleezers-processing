@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +27,31 @@ class SessionInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 class FileOpenRequest(BaseModel):
-    path: str
+    """Open a file either by server path or by reference to an uploaded dataset.
+
+    ``path`` is a server-filesystem path -- used by session reload
+    (``POST /api/sessions/load/{id}``) and available to CLI/scripted callers,
+    but no longer exposed as a UI affordance. ``dataset_id``+``relative_path``
+    reference a file inside the caller's upload workspace (see workspace.py)
+    and are always confined there regardless of ``SFZ_DATA_ROOT`` -- that's
+    what lets uploads work with zero server-side configuration.
+    """
+    path: str | None = None
+    dataset_id: str | None = None
+    relative_path: str | None = None
     session_id: str | None = None   # if None → create a new session
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "FileOpenRequest":
+        has_path = self.path is not None
+        has_dataset = self.dataset_id is not None or self.relative_path is not None
+        if has_path == has_dataset:
+            raise ValueError(
+                "Provide exactly one of 'path' or ('dataset_id' + 'relative_path')"
+            )
+        if has_dataset and (self.dataset_id is None or self.relative_path is None):
+            raise ValueError("'dataset_id' and 'relative_path' must be provided together")
+        return self
 
 
 class TraceMetadata(BaseModel):
@@ -99,6 +122,12 @@ class StepFindResult(BaseModel):
     step_times: list[float]
     levels: list[float]
     chi2: float | None = None
+    # The range this result was computed over. ``step_positions`` index into
+    # the *cropped* array, so any downstream consumer (velocity method="steps",
+    # kinetics dwell times) must re-apply the same crop before indexing a time
+    # axis -- otherwise the positions silently refer to the wrong samples.
+    t_start: float | None = None
+    t_end: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +173,8 @@ class VelocityRequest(BaseModel):
     window: int = Field(default=21, ge=3, le=100_001)
     polyorder: int = Field(default=2, ge=0, le=10)
     step_result_id: str | None = None
+    t_start: float | None = None
+    t_end: float | None = None
 
 
 class VelocityResult(BaseModel):
@@ -241,6 +272,8 @@ class ViolinRequest(BaseModel):
     file_ids: list[str] = Field(min_length=1, max_length=200)   # one violin per file
     channel: str = "extension"
     bandwidth: float | str = "scott"
+    t_start: float | None = None
+    t_end: float | None = None
 
 
 class ViolinGroup(BaseModel):
@@ -295,3 +328,35 @@ class MeasurementResult(BaseModel):
     t_start: float
     t_end: float
     duration: float
+
+
+# ---------------------------------------------------------------------------
+# Uploads (browser-side data intake — see web/workspace.py)
+# ---------------------------------------------------------------------------
+
+class DatasetCreateRequest(BaseModel):
+    name: str = "Untitled"
+
+
+class UploadEntryOut(BaseModel):
+    relative_path: str
+    size_bytes: int
+    kind: str                       # "trace" | "sidecar" | "batch" | "skipped"
+    parent: str | None = None
+    sidecars: list[str] = Field(default_factory=list)
+    missing_sidecars: list[str] = Field(default_factory=list)
+    warning: str | None = None
+
+
+class DatasetOut(BaseModel):
+    dataset_id: str
+    name: str
+    created_at: str
+    finalized: bool
+    total_bytes: int
+    entries: list[UploadEntryOut]
+
+
+class UploadedFileOut(BaseModel):
+    relative_path: str
+    size_bytes: int

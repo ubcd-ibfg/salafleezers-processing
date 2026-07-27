@@ -3,12 +3,20 @@
   import { onMount, onDestroy } from 'svelte'
   import Plot from './Plot.svelte'
   import AnalysisPanels from './panels/AnalysisPanels.svelte'
+  import RunButton from './ui/RunButton.svelte'
   import { api } from './api'
   import { session } from './stores/session.svelte'
+  import { theme } from './stores/theme.svelte'
+  import { seriesColor, dangerColor } from './theme/plot'
+  import { useRun } from './ui/useRun.svelte'
+  import { formatApiError } from './ui/formatError'
   import type { MeasurementResult, StepFindAlgorithm, StepFindResult } from './types'
 
   const TARGET_POINTS = 4000
-  const PALETTE = ['#7c3aed', '#059669', '#d97706', '#dc2626', '#2563eb', '#0891b2']
+  // A fresh, unguided full-resolution step-find is documented O(N^2) server
+  // side; past this many samples the server will 422 rather than grind, so
+  // warn in the UI before the round-trip rather than after.
+  const STEPFIND_WARN_SAMPLES = 2_000_000
 
   let plotRef: Plot | undefined = $state()
   let primaryChannel = $state<string>('')
@@ -32,12 +40,31 @@
   let penFactor = $state(2.0)
   let nStates = $state(2)
   let stepResult = $state<StepFindResult | null>(null)
-  let stepRunning = $state(false)
+  const stepRun = useRun<StepFindResult>()
 
   let measurement = $state<MeasurementResult | null>(null)
   let measuring = $state(false)
+  const MEASURE_TIMEOUT_MS = 15_000
 
   let comment = $state('')
+
+  // The range every analysis endpoint (step-find, and every AnalysisPanels
+  // tab) is run over -- always concrete, resolved from the current view,
+  // never sent as null. A freshly-opened file's default view IS the full
+  // trace, and that's a legitimate thing to analyze; the point is the user
+  // can SEE the sample count they're about to run over before clicking Run,
+  // instead of it being an invisible O(N^2) surprise.
+  let analysisRange = $derived.by(() => {
+    const file = session.activeFile
+    if (!file) return null
+    const isFullRange = viewStart == null && viewEnd == null
+    const start = viewStart ?? 0
+    const end = viewEnd ?? file.duration_s
+    const nSamples = isFullRange
+      ? file.n_samples
+      : Math.max(0, Math.round((end - start) * file.sampling_rate_hz))
+    return { start, end, nSamples }
+  })
 
   // Reset per-file state when the active file changes.
   let lastFileId: string | null = null
@@ -99,7 +126,7 @@
       }
       overlayData = overlays
     } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e)
+      loadError = formatApiError(e)
     } finally {
       loading = false
     }
@@ -128,9 +155,15 @@
       filteredData = null
       return
     }
+    // Unsubscribe on ANY response for this request (trace or error) -- the
+    // previous version only unsubscribed on a matching 'trace' message, so a
+    // server-side error left this listener registered for the rest of the
+    // page's life, silently consuming every future WS message once.
     const unsub = session.socket.onMessage((msg) => {
       if (msg.type === 'trace' && msg.channel === primaryChannel) {
         filteredData = msg.data
+        unsub()
+      } else if (msg.type === 'error') {
         unsub()
       }
     })
@@ -196,39 +229,53 @@
   function measureSelection() {
     if (!selection || !session.socket || !session.activeFile) return
     measuring = true
+    let settled = false
     const unsub = session.socket.onMessage((msg) => {
       if (msg.type === 'measurement') {
+        settled = true
         measurement = msg
         measuring = false
         unsub()
       } else if (msg.type === 'error') {
+        settled = true
         measuring = false
         unsub()
       }
     })
+    // A dropped socket (server restart, session TTL eviction) otherwise left
+    // this spinner -- and the disabled Measure button -- stuck forever.
+    setTimeout(() => {
+      if (!settled) {
+        settled = true
+        measuring = false
+        unsub()
+      }
+    }, MEASURE_TIMEOUT_MS)
     session.socket.measure(session.activeFile.file_id, primaryChannel, selection.start, selection.end)
   }
 
   async function runStepFind() {
     const file = session.activeFile
-    if (!file) return
-    stepRunning = true
-    try {
-      stepResult = await api.stepFind({
-        session_id: session.sessionId!,
-        file_id: file.file_id,
-        channel: primaryChannel,
-        algorithm,
-        pen_factor: penFactor,
-        n_states: nStates,
-        t_start: viewStart,
-        t_end: viewEnd,
-      })
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e)
-    } finally {
-      stepRunning = false
-    }
+    const range = analysisRange
+    if (!file || !range) return
+    await stepRun.run(
+      (signal) =>
+        api.stepFind(
+          {
+            session_id: session.sessionId!,
+            file_id: file.file_id,
+            channel: primaryChannel,
+            algorithm,
+            pen_factor: penFactor,
+            n_states: nStates,
+            t_start: range.start,
+            t_end: range.end,
+          },
+          { signal },
+        ),
+      120_000,
+    )
+    if (stepRun.result) stepResult = stepRun.result
   }
 
   function resampleSteps(result: StepFindResult, time: number[]): number[] {
@@ -245,14 +292,12 @@
   }
 
   let plotSeries = $derived.by((): uPlot.Series[] => {
-    const s: uPlot.Series[] = [
-      {},
-      { label: primaryChannel, stroke: PALETTE[0], width: 1.5 },
-    ]
-    if (filteredData) s.push({ label: `${primaryChannel} (filtered)`, stroke: PALETTE[3], width: 1.5 })
-    if (stepResult) s.push({ label: `${stepResult.algorithm} steps`, stroke: PALETTE[2], width: 2 })
+    theme.current
+    const s: uPlot.Series[] = [{}, { label: primaryChannel, stroke: seriesColor(0), width: 1.5 }]
+    if (filteredData) s.push({ label: `${primaryChannel} (filtered)`, stroke: dangerColor(), width: 1.5 })
+    if (stepResult) s.push({ label: `${stepResult.algorithm} steps`, stroke: seriesColor(2), width: 2 })
     overlayChannels.forEach((ch, i) => {
-      s.push({ label: ch, stroke: PALETTE[(i + 2) % PALETTE.length], width: 1.2 })
+      s.push({ label: ch, stroke: seriesColor(i + 3), width: 1.2 })
     })
     return s
   })
@@ -319,45 +364,47 @@
 </script>
 
 {#if !session.activeFile}
-  <p class="muted">Open a file above to view its traces.</p>
+  <p class="muted">Open a file from the data rail to view its traces.</p>
 {:else}
-  <div class="toolbar card row">
-    <label>
-      Channel
-      <select bind:value={primaryChannel}>
-        {#each session.activeFile.channels as ch (ch)}
-          <option value={ch}>{ch}</option>
-        {/each}
-      </select>
-    </label>
+  <div class="toolbar card row stack-lg">
+    <div class="row">
+      <label>
+        Channel
+        <select bind:value={primaryChannel}>
+          {#each session.activeFile.channels as ch (ch)}
+            <option value={ch}>{ch}</option>
+          {/each}
+        </select>
+      </label>
 
-    <div>
-      <span class="muted" style="display:block; font-size:12px;">Overlay</span>
-      <div class="row" style="gap:6px;">
-        {#each session.activeFile.channels.filter((c) => c !== primaryChannel) as ch (ch)}
-          <label style="flex-direction: row; align-items: center; gap: 4px;">
-            <input
-              type="checkbox"
-              checked={overlayChannels.includes(ch)}
-              onchange={() => toggleOverlay(ch)}
-            />
-            {ch}
-          </label>
-        {/each}
+      <div>
+        <span class="label">Overlay</span>
+        <div class="row-center" style="margin-top: 4px;">
+          {#each session.activeFile.channels.filter((c) => c !== primaryChannel) as ch (ch)}
+            <label style="flex-direction: row; align-items: center; gap: 4px;">
+              <input
+                type="checkbox"
+                checked={overlayChannels.includes(ch)}
+                onchange={() => toggleOverlay(ch)}
+              />
+              {ch}
+            </label>
+          {/each}
+        </div>
       </div>
+
+      <label>
+        Filter half-width
+        <input type="number" min="0" bind:value={filterHalfWidth} onchange={applyFilter} style="width: 80px" />
+      </label>
+
+      <button onclick={exportCsv} disabled={!mainTime.length}>Export CSV</button>
     </div>
-
-    <label>
-      Filter half-width
-      <input type="number" min="0" bind:value={filterHalfWidth} onchange={applyFilter} style="width:80px" />
-    </label>
-
-    <button onclick={exportCsv} disabled={!mainTime.length}>Export CSV</button>
   </div>
 
-  <div class="card" style="margin-top:8px;">
+  <div class="card stack" style="margin-top: 8px;">
     {#if loading}<p class="muted">Loading…</p>{/if}
-    {#if loadError}<p style="color: var(--danger)">{loadError}</p>{/if}
+    {#if loadError}<p class="text-danger">{loadError}</p>{/if}
     <Plot
       bind:this={plotRef}
       data={plotData}
@@ -366,10 +413,12 @@
       onZoom={() => {}}
       onSelect={(min, max) => (selection = { start: min, end: max })}
     />
-    <div class="row" style="margin-top:8px;">
+    <div class="row-center">
       <button disabled={!selection} onclick={zoomToSelection} title="z">Zoom to selection</button>
       <button disabled={!selection} onclick={applyCrop} title="c">Apply crop</button>
-      <button disabled={!selection || measuring} onclick={measureSelection} title="m">Measure selection</button>
+      <button disabled={!selection || measuring} onclick={measureSelection} title="m">
+        {measuring ? 'Measuring…' : 'Measure selection'}
+      </button>
       <button disabled={viewStart == null} onclick={resetZoom} title="0">Reset view</button>
       <button disabled={!viewHistory.length} onclick={undoView} title="Ctrl+Z">Undo</button>
       <button disabled={!redoHistory.length} onclick={redoView} title="Ctrl+Shift+Z">Redo</button>
@@ -377,7 +426,7 @@
         Export PNG
       </button>
       {#if selection}
-        <span class="muted mono">
+        <span class="dim mono">
           [{selection.start.toFixed(3)}, {selection.end.toFixed(3)}] s
         </span>
       {/if}
@@ -385,9 +434,9 @@
   </div>
 
   {#if measurement}
-    <div class="card" style="margin-top:8px;">
-      <strong>Measurement</strong>
-      <div class="row mono">
+    <div class="card" style="margin-top: 8px;">
+      <span class="label">Measurement</span>
+      <div class="row mono" style="margin-top: 4px;">
         <span>mean {measurement.mean.toFixed(4)}</span>
         <span>std {measurement.std.toFixed(4)}</span>
         <span>median {measurement.median.toFixed(4)}</span>
@@ -399,41 +448,57 @@
     </div>
   {/if}
 
-  <div class="card row" style="margin-top:8px;">
-    <label>
-      Algorithm
-      <select bind:value={algorithm}>
-        <option value="kv">Kalafut-Visscher</option>
-        <option value="hmm">HMM</option>
-      </select>
-    </label>
-    {#if algorithm === 'kv'}
+  <div class="card stack" style="margin-top: 8px;">
+    <div class="row">
       <label>
-        Penalty factor
-        <input type="number" step="0.1" bind:value={penFactor} style="width:80px" />
+        Algorithm
+        <select bind:value={algorithm}>
+          <option value="kv">Kalafut-Visscher</option>
+          <option value="hmm">HMM</option>
+        </select>
       </label>
-    {:else}
-      <label>
-        N states
-        <input type="number" min="2" bind:value={nStates} style="width:80px" />
-      </label>
-    {/if}
-    <button class="primary" onclick={runStepFind} disabled={stepRunning}>
-      {stepRunning ? 'Running…' : 'Run step-find'}
-    </button>
-    {#if stepResult}
-      <span class="muted">
-        {stepResult.n_steps} steps found{stepResult.chi2 != null ? `, χ² = ${stepResult.chi2.toFixed(2)}` : ''}
-      </span>
+      {#if algorithm === 'kv'}
+        <label>
+          Penalty factor
+          <input type="number" step="0.1" bind:value={penFactor} style="width: 80px" />
+        </label>
+      {:else}
+        <label>
+          N states
+          <input type="number" min="2" bind:value={nStates} style="width: 80px" />
+        </label>
+      {/if}
+      <RunButton state={stepRun} label="Run step-find" onRun={runStepFind} />
+      {#if stepResult}
+        <span class="dim">
+          {stepResult.n_steps} steps found{stepResult.chi2 != null ? `, χ² = ${stepResult.chi2.toFixed(2)}` : ''}
+        </span>
+      {/if}
+    </div>
+    {#if analysisRange}
+      <p class="dim mono" style="font-size: var(--text-xs); margin: 0;">
+        analysis range {analysisRange.start.toFixed(2)}–{analysisRange.end.toFixed(2)} s ·
+        {analysisRange.nSamples.toLocaleString()} samples
+        {#if analysisRange.nSamples > STEPFIND_WARN_SAMPLES}
+          <span class="text-warn"> — large range, step-find may be slow or refused; zoom in first</span>
+        {/if}
+      </p>
     {/if}
   </div>
 
-  <AnalysisPanels channel={primaryChannel} tStart={viewStart} tEnd={viewEnd} {stepResult} />
+  {#if analysisRange}
+    <AnalysisPanels
+      channel={primaryChannel}
+      tStart={analysisRange.start}
+      tEnd={analysisRange.end}
+      {stepResult}
+    />
+  {/if}
 
-  <div class="card" style="margin-top:8px;">
+  <div class="card" style="margin-top: 8px;">
     <label>
       Comment (local to this session)
-      <textarea bind:value={comment} rows="2" style="width:100%"></textarea>
+      <textarea bind:value={comment} rows="2" style="width: 100%"></textarea>
     </label>
   </div>
 {/if}

@@ -1,24 +1,24 @@
 # Adding an analysis module
 
 Worked from the pattern actually used to add the KDE, distribution-comparison, and MSD
-analyses in Phase 5/6 — three real modules that existed as pure functions in `analysis/stats.py`
-but had no web endpoint until they were needed for the GUI's analysis panels.
+analyses — three real modules that existed as pure functions in `analysis/stats.py` but had no
+web endpoint until they were needed for the GUI's analysis panels.
 
 ## 1. Write the pure function first
 
 It goes in `src/salafleezers/analysis/` (or a new file there), takes and returns plain
-`numpy` arrays/dataclasses, and has **zero** imports from `web/` or `cli/`. If you're porting a
-MATLAB routine, name it in the docstring (`"""Port of foo.m."""`) and note anywhere your
-implementation *deviates* from a literal port — see [MATLAB → Python
-mapping](matlab-mapping.md).
+`numpy` arrays/dataclasses, and has **zero** imports from `web/` or `cli/`. If you're
+implementing a published algorithm or a specific formulation (a named method, a paper, a
+textbook derivation), cite it in the docstring and note anywhere your implementation departs
+from that reference — deviations should be explicit, not left implicit.
 
 ```python
 # analysis/stats.py (already existed)
 def kde(data, n_points=512, bandwidth="scott", x_range=None, weights=None) -> KDEResult: ...
 ```
 
-Write its unit tests in `tests/test_analysis.py` against synthetic data — these should pass
-without any MATLAB/Octave dependency. If a golden MATLAB fixture is feasible, add one too — see
+Write its unit tests in `tests/test_analysis.py` against synthetic data. If an independently
+computed golden fixture is feasible, add one too — see
 [Testing & golden files](testing-golden-files.md).
 
 ## 2. Add request/response schemas
@@ -97,8 +97,8 @@ uPlot series data is shaped right or that the WebSocket messages round-trip corr
 
 ## 6. Full checklist
 
-- [ ] Pure function in `analysis/`, with a docstring citing the MATLAB source (or explaining
-      why there isn't one)
+- [ ] Pure function in `analysis/`, with a docstring citing the algorithm/reference it
+      implements (or explaining why there isn't one)
 - [ ] Unit test(s) in `tests/test_analysis.py`
 - [ ] (Optional but encouraged) golden fixture — see [Testing & golden
       files](testing-golden-files.md)

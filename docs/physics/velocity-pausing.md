@@ -1,8 +1,7 @@
 # Velocity & pausing
 
-Implemented in `salafleezers.analysis.velocity`, port of `ppKVv4.m` / `sgolaydiff.m` /
-`vdist.m` / `vdist_force.m`. Two independent ways to turn an extension trace into a velocity,
-plus a way to summarize velocities as a distribution.
+Implemented in `salafleezers.analysis.velocity`. Two independent ways to turn an extension
+trace into a velocity, plus a way to summarize velocities as a distribution.
 
 ## Step-based velocity (`step_velocities`)
 
@@ -40,8 +39,7 @@ velocities.
 
 A plain histogram of the velocity values (from either method above) — this is what the GUI's
 Velocity analysis panel and `sfz velocity` plot. The underlying function
-(`velocity_histogram`) also supports an optional 2-D histogram binned by a matching force array
-(port of `vdist_force.m`), for seeing how velocity depends on applied load — that capability
-exists in the library today but isn't yet wired into the CLI or GUI (both currently call it
-velocity-only); see [Adding an analysis module](../developer/adding-analysis-module.md) if you
-want to expose it.
+(`velocity_histogram`) also supports an optional 2-D histogram binned by a matching force
+array, for seeing how velocity depends on applied load — that capability exists in the library
+today but isn't yet wired into the CLI or GUI (both currently call it velocity-only); see
+[Adding an analysis module](../developer/adding-analysis-module.md) if you want to expose it.

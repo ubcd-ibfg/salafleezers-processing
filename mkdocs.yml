@@ -1,5 +1,5 @@
 site_name: SalaFleezer Processing
-site_description: MATLAB-free optical-tweezers data processing & analysis platform
+site_description: Optical-tweezers data processing & analysis platform
 
 theme:
   name: material
@@ -35,6 +35,7 @@ nav:
       - GUI walkthrough: user-guide/gui-walkthrough.md
       - Data formats: user-guide/data-formats.md
       - Batch files: user-guide/batch-files.md
+      - RNAP nucleosome crossing: user-guide/rnap-nucleosome-crossing.md
   - Physics & Methods:
       - Optical trapping basics: physics/optical-trapping.md
       - Calibration & trap stiffness: physics/calibration.md
@@ -45,12 +46,10 @@ nav:
       - Dwell-time kinetics: physics/dwell-time-kinetics.md
   - Developer Guide:
       - Architecture: developer/architecture.md
-      - MATLAB → Python mapping: developer/matlab-mapping.md
       - Adding an analysis module: developer/adding-analysis-module.md
       - API reference: developer/api-reference.md
       - Testing & golden files: developer/testing-golden-files.md
       - Contributing: developer/contributing.md
-      - Full roadmap: ROADMAP.md
 
 markdown_extensions:
   - attr_list

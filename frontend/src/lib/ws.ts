@@ -1,6 +1,8 @@
 // Thin wrapper around the /ws/session/{id} protocol documented in
 // src/salafleezers/web/ws/session.py.
 
+import { api } from './api'
+
 export interface WsTraceMsg {
   type: 'trace'
   file_id: string
@@ -55,9 +57,23 @@ export class SessionSocket {
     this.connect()
   }
 
-  private connect() {
+  private async connect() {
+    // Browsers can't attach an Authorization header to a WS handshake, so a
+    // short-lived single-use ticket (see web/auth.py) stands in for one.
+    // Fetching it always -- even with auth disabled, where the server just
+    // returns a ticket for the anonymous principal -- keeps this path
+    // uniform instead of duplicating the server's auth_required() branch here.
+    let ticketQs = ''
+    try {
+      const { ticket } = await api.wsTicket()
+      ticketQs = `?ticket=${encodeURIComponent(ticket)}`
+    } catch {
+      // Ticket endpoint unreachable -- fall back to a bare connect; the
+      // server rejects it with a clear close code if auth is required.
+    }
+
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${window.location.host}/ws/session/${this.sessionId}`
+    const url = `${proto}://${window.location.host}/ws/session/${this.sessionId}${ticketQs}`
     this.ws = new WebSocket(url)
     this.ws.onopen = () => {
       for (const msg of this.queue.splice(0)) this.ws!.send(msg)

@@ -11,14 +11,12 @@ POST   /api/sessions/load/{id} → restore from disk
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from salafleezers.web.auth import Principal, get_current_principal
 from salafleezers.web.schemas import SessionInfo
-from salafleezers.web.sessions import Session, LoadedFile, session_manager
+from salafleezers.web.sessions import Session, session_manager
 from salafleezers.web.storage import (
     InvalidSegmentError,
     LocalFilesystemStore,
@@ -50,8 +48,8 @@ def _info(session: Session) -> SessionInfo:
     return SessionInfo(
         session_id=session.session_id,
         created_at=session.created_at.isoformat(),
-        n_files=len(session.files),
-        file_ids=list(session.files.keys()),
+        n_files=len(session.file_refs),
+        file_ids=session.file_ids,
     )
 
 
@@ -102,19 +100,8 @@ def save_session(
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    state = {
-        "session_id": s.session_id,
-        "created_at": s.created_at.isoformat(),
-        "file_paths": {fid: f.path for fid, f in s.files.items()},
-        "step_results": s.step_results,
-        "wlc_results": s.wlc_results,
-        "velocity_results": s.velocity_results,
-        "pwd_results": s.pwd_results,
-        "kinetics_results": s.kinetics_results,
-        "kde_results": s.kde_results,
-    }
     try:
-        path = _store_for(principal).save_session(session_id, state)
+        path = _store_for(principal).save_session(session_id, s.to_document())
     except InvalidSegmentError:
         raise HTTPException(status_code=400, detail="Invalid session id")
     return {"saved_to": str(path)}
@@ -124,7 +111,14 @@ def save_session(
 def load_session(
     session_id: str, principal: Principal = Depends(get_current_principal)
 ):
-    """Reload a previously saved session from disk, re-parsing file arrays."""
+    """Reload a previously saved session from disk.
+
+    Restores the durable document only -- arrays rehydrate lazily on first
+    access (see ``Session.get_file``), so loading a session with 700 files is
+    a cheap operation rather than a multi-minute re-parse. Refs whose bytes
+    have vanished are reported as ``n_files_unavailable`` instead of being
+    silently dropped, which is what the previous eager reload did.
+    """
     try:
         state = _store_for(principal).load_session(session_id)
     except FileNotFoundError:
@@ -132,43 +126,23 @@ def load_session(
     except InvalidSegmentError:
         raise HTTPException(status_code=400, detail="Invalid session id")
 
-    s = Session(
-        session_id=state["session_id"],
-        created_at=datetime.fromisoformat(state["created_at"]),
-        user_id=principal.user_id,
-        step_results=state.get("step_results", {}),
-        wlc_results=state.get("wlc_results", {}),
-        velocity_results=state.get("velocity_results", {}),
-        pwd_results=state.get("pwd_results", {}),
-        kinetics_results=state.get("kinetics_results", {}),
-        kde_results=state.get("kde_results", {}),
-    )
+    s = Session.from_document(state, user_id=principal.user_id)
     session_manager.restore(s)
 
-    from salafleezers.web.io import estimate_sampling_rate, load_file
-
-    reloaded = 0
-    for fid, path_str in state.get("file_paths", {}).items():
-        p = Path(path_str)
-        if not p.exists():
-            continue
+    unavailable = []
+    for fid, ref in s.file_refs.items():
         try:
-            channels, time, meta, filename = load_file(p)
-            s.files[fid] = LoadedFile(
-                file_id=fid,
-                filename=filename,
-                path=path_str,
-                n_samples=len(time),
-                sampling_rate_hz=estimate_sampling_rate(time),
-                channels=channels,
-                time=time,
-                meta=meta,
-            )
-            reloaded += 1
+            if not ref.resolve(s.user_id).exists():
+                unavailable.append(fid)
         except Exception:
             logger.warning(
-                "Failed to reload file %r for session %r", path_str, session_id,
-                exc_info=True,
+                "Unresolvable file ref %r in session %r", fid, session_id, exc_info=True
             )
+            unavailable.append(fid)
 
-    return {"loaded": session_id, "n_files_reloaded": reloaded}
+    return {
+        "loaded": session_id,
+        "n_files": len(s.file_refs),
+        "n_files_unavailable": len(unavailable),
+        "unavailable_file_ids": unavailable,
+    }

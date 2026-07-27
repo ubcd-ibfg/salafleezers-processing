@@ -10,10 +10,24 @@ you skip it, the server still starts fine but the browser tab stays blank.
 
 ## Opening a file
 
-The GUI is local-first: it opens files by path on the machine `sfz gui` is running on (there's
-no upload — this is the same machine your instrument writes `.dat` files to, or wherever you
-`scp`'d them). Type a path and click **Open file**; `.dat`, `.h5`, `.mat`, and `.npz` are all
-supported (see [Data formats](data-formats.md)).
+Drag files or a folder onto the page — or use the **Choose files** / **Choose folder** buttons
+in the data rail — and they upload straight into your own workspace on the server. No server
+filesystem path to know or type, and no configuration required to get started. `.dat`, `.h5`,
+and `.npz` are all supported (see [Data formats](data-formats.md); `.mat` is currently
+write-only, produced by `sfz process --save-format mat`, not readable by the GUI).
+
+Uploading a **folder** (rather than a lone `.dat` file) matters for raw SalaFleezer data: each
+`.dat`'s optional `_pos`/`_fl`/`_grn` sidecar files have to land next to it to be read, and the
+data rail flags a trace with a missing expected sidecar so you know to re-drop the whole folder
+rather than a single file. Uploaded datasets appear in the rail, grouped by folder; click a trace
+to open it, or check several and click **Open N selected** to load them all (e.g. for the
+cross-file Distributions comparison).
+
+For scripted or CLI workflows where the files are already on the same host `sfz gui` runs on,
+the backend still accepts an ordinary server path via the API — see `--data-root` in
+[Installation](installation.md) — but that is no longer a UI affordance.
+
+*(Screenshots below predate this flow and are due for a re-shoot; the described behavior is current.)*
 
 ![Empty state](../assets/screenshots/01-empty-state.png)
 
@@ -68,7 +82,9 @@ Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z undo/redo, Ctrl/Cmd+S saves the session.
 
 ## Sessions
 
-**Save session** persists the loaded files' paths, crops, and every cached analysis result to
-disk (`~/.salafleezers/sessions/`, or namespaced by user if `SFZ_AUTH_TOKEN` is set — see
-[Architecture](../developer/architecture.md#storage-auth)) — reload the same session ID later
-to pick up where you left off, re-parsing the original files from their saved paths.
+**Save session** persists the loaded files' references, crops, and every cached analysis result
+to disk (`~/.salafleezers/sessions/`, namespaced by user when `SFZ_TRUSTED_USER_HEADER` is
+configured — see [Architecture](../developer/architecture.md#session-state-storage-auth)) —
+reload the same session ID later to pick up where you left off. Files rehydrate lazily on first
+access rather than all at once, so reloading a session with hundreds of files is fast even
+before you've reopened any of them.

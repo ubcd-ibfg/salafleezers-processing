@@ -12,7 +12,7 @@ cd frontend && npm ci && npm run build
 ## Running everything locally
 
 ```bash
-uv run pytest -q                # full test suite (99+ tests, no MATLAB needed)
+uv run pytest -q                # full test suite (fast, synthetic fixtures)
 uv run ruff check src tests     # lint
 uv run mypy src                 # type check (non-strict)
 mamba run -n node npm run check --prefix frontend   # frontend typecheck (Svelte + TS)
@@ -32,9 +32,6 @@ mkdocs serve                    # this site, live-reloading, at http://127.0.0.1
 - [ ] If you touched `web/schemas.py`: update the matching TypeScript types in
       `frontend/src/lib/types.ts` in the same PR — they're meant to mirror each other exactly
       (see [Architecture](architecture.md)).
-- [ ] If you changed behavior documented in `COMPARISON.md`: update it. A stale "known
-      difference" entry is worse than none — see the lesson at the bottom of [Testing & golden
-      files](testing-golden-files.md).
 
 ## Commit style
 
@@ -47,8 +44,7 @@ explicitly — that context is valuable and easy to lose once the fix lands.
 - `analysis/` and `processing/` stay pure — no `fastapi`, no `typer`, no plotting, no module-
   level mutable state. If you're tempted to import something GUI/CLI-specific there, the
   function probably belongs one layer up.
-- Docstrings on ported functions name the MATLAB source file; deviations from a literal port are
-  called out explicitly, not left implicit — see [MATLAB → Python
-  mapping](matlab-mapping.md#porting-philosophy).
+- Docstrings on algorithm implementations cite the method/reference they follow; deviations from
+  that reference are called out explicitly, not left implicit.
 - Don't add error handling for inputs that can't occur at that call site — validate at the
   actual boundary (a CLI argument, an API request body), trust internal callers.

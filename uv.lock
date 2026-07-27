@@ -1287,6 +1287,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.32"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1400,6 +1409,22 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "hypothesis" },
+    { name = "matplotlib" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+    { name = "mypy" },
+    { name = "pydantic" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
+]
 dev = [
     { name = "httpx" },
     { name = "hypothesis" },
@@ -1417,33 +1442,49 @@ gui = [
     { name = "fastapi" },
     { name = "matplotlib" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.111" },
     { name = "fastapi", marker = "extra == 'gui'", specifier = ">=0.111" },
     { name = "h5py", specifier = ">=3.11" },
+    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "hypothesis", marker = "extra == 'all'", specifier = ">=6.100" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
+    { name = "matplotlib", marker = "extra == 'all'", specifier = ">=3.9" },
     { name = "matplotlib", marker = "extra == 'gui'", specifier = ">=3.9" },
+    { name = "mkdocs-material", marker = "extra == 'all'", specifier = ">=9.5" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'all'", specifier = ">=0.25" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.25" },
+    { name = "mypy", marker = "extra == 'all'", specifier = ">=1.10" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "pydantic", marker = "extra == 'all'", specifier = ">=2.7" },
     { name = "pydantic", marker = "extra == 'gui'", specifier = ">=2.7" },
+    { name = "pytest", marker = "extra == 'all'", specifier = ">=8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'all'", specifier = ">=0.24" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "pytest-cov", marker = "extra == 'all'", specifier = ">=5.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
+    { name = "python-multipart", marker = "extra == 'gui'", specifier = ">=0.0.9" },
     { name = "rich", specifier = ">=13.0" },
+    { name = "ruff", marker = "extra == 'all'", specifier = ">=0.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "scipy", specifier = ">=1.14" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'gui'", specifier = ">=0.30" },
+    { name = "websockets", marker = "extra == 'all'", specifier = ">=12.0" },
     { name = "websockets", marker = "extra == 'gui'", specifier = ">=12.0" },
 ]
-provides-extras = ["gui", "docs", "dev"]
+provides-extras = ["gui", "docs", "dev", "all"]
 
 [[package]]
 name = "scipy"

@@ -14,12 +14,13 @@ src/salafleezers/
 ├── cli/                 — Typer + Rich (sfz command)
 └── web/                 — FastAPI backend (optional [gui] extra)
     ├── app.py           —   app factory, mounts the built SPA
-    ├── api/              —   REST routers (sessions, files, traces, analysis)
+    ├── api/              —   REST routers (sessions, files, uploads, traces, analysis)
     ├── ws/               —   WebSocket session protocol (live filter/crop/measure)
     ├── schemas.py        —   pydantic models shared by REST + WS + (conceptually) the frontend
-    ├── sessions.py       —   in-memory session state
-    ├── storage.py        —   disk persistence, pluggable backend
-    └── auth.py           —   principal resolution (anonymous by default)
+    ├── sessions.py       —   session state: durable FileRef/document + a byte-bounded ArrayCache
+    ├── workspace.py      —   per-user durable upload storage (browser drag-and-drop intake)
+    ├── storage.py        —   session-document disk persistence, pluggable backend
+    └── auth.py           —   principal resolution (anonymous / bearer-token / proxy-identity)
 
 frontend/                — Svelte 5 + Vite + TypeScript SPA, built separately with npm
 ```
@@ -29,8 +30,8 @@ frontend/                — Svelte 5 + Vite + TypeScript SPA, built separately 
 by importing the same function — there is exactly one implementation of "how do you fit a WLC
 curve" or "how does Kalafut-Visscher decide to add a step," not one for the GUI and a
 subtly-different one for the CLI. This is also what makes [golden-file
-testing](testing-golden-files.md) meaningful: a fixture generated once by running the real
-MATLAB source validates the analysis function directly, and every caller (CLI, API, GUI)
+testing](testing-golden-files.md) meaningful: a fixture generated once against an independently
+computed reference validates the analysis function directly, and every caller (CLI, API, GUI)
 inherits that correctness for free.
 
 ## Request flow (web GUI)
@@ -38,41 +39,53 @@ inherits that correctness for free.
 1. `sfz gui` calls `web.app.create_app()`, which builds a FastAPI app, mounts the REST routers
    and the WebSocket endpoint, and serves the built SPA's static files at `/`.
 2. The frontend calls `POST /api/sessions` once on load to get a session ID (persisted in
-   `localStorage` so a page refresh resumes the same session), then `POST /api/files/open` with
-   a server-side file path to parse a trace and get a decimated preview.
+   `localStorage` so a page refresh resumes the same session). Data gets in via
+   `POST /api/uploads` + `POST /api/uploads/{id}/files` (one request per file, streamed into a
+   durable per-user workspace — see `web/workspace.py`), then `POST /api/files/open` with a
+   `{dataset_id, relative_path}` reference to parse a trace and get a decimated preview. The
+   same endpoint also accepts a bare server path, kept for session-reload and scripted callers.
 3. Interactive operations that need low latency (dragging a crop line, a live filter-width
    slider, the measure tool) go over the `/ws/session/{id}` WebSocket rather than round-tripping
-   through REST — see `web/ws/session.py` for the message protocol.
+   through REST — see `web/ws/session.py` for the message protocol. Browsers can't attach an
+   `Authorization` header to a WS handshake, so the socket authenticates with a short-lived
+   single-use ticket obtained from `POST /api/ws-ticket` instead.
 4. Every analysis button (step-find, WLC fit, velocity, PWD, kinetics, KDE, distributions, MSD)
    is a `POST /api/<name>` call into `web/api/analysis.py`, which does essentially nothing but
    unwrap the request, call straight into `analysis.*`, and wrap the result — see [Adding an
    analysis module](adding-analysis-module.md) for the exact pattern.
 
-## Storage & auth
+## Session state, storage & auth
 
-Session save/load (`POST /api/sessions/{id}/save`, `POST /api/sessions/load/{id}`) persists to
-disk through a small abstraction designed for **local-first today, shared-server later**
-without touching any of the business logic above it:
+A session's *durable document* (which files are loaded, by reference; crops; cached analysis
+results) is separate from the *array cache* (the parsed numpy arrays themselves):
 
-- **`storage.StorageBackend`** (a `Protocol`) formalizes the contract: save/load/list/delete a
-  session's JSON state, and save/load named arrays too large for JSON.
-- **`storage.LocalFilesystemStore`** is the only real implementation today — writes to
-  `~/.salafleezers/sessions/<session_id>/`.
-- **`storage.UserScopedStore`** wraps any backend, namespacing session IDs under
-  `<user_id>/<session_id>` so multiple users' sessions can't collide or see each other's data —
-  purely a path-prefixing decorator, no new storage engine.
-- **`auth.get_current_principal`** is a FastAPI dependency resolving *who's calling*. With no
-  `SFZ_AUTH_TOKEN` configured (the default), everyone resolves to one fixed anonymous
-  principal — today's single-user behavior, unchanged. Setting `SFZ_AUTH_TOKEN` turns on a
-  shared-secret bearer-token gate: anyone with the token is treated as one shared principal.
-  This is intentionally minimal — a seam for a small shared-lab deployment behind a reverse
-  proxy, not a full multi-user identity system — see the docstring in `web/auth.py` for exactly
-  what it does and doesn't do.
+- **`sessions.FileRef`** is a re-resolvable pointer to one file's bytes — either
+  `{kind: "dataset", dataset_id, relative_path}` (an uploaded file, confined to its owner's
+  workspace) or `{kind: "path", path}` (a server path). `Session.get_file()` resolves a ref
+  through `sessions.ArrayCache`, a process-wide LRU cache bounded by total bytes rather than by
+  session or file count, transparently re-parsing on a cache miss. Evicting an entry is never
+  destructive — it's derived state, not the source of truth.
+- **`storage.StorageBackend`** (a `Protocol`) formalizes the session-document persistence
+  contract: save/load/list/delete a session's JSON state (file refs, crops, cached results).
+  **`storage.LocalFilesystemStore`** is the only real implementation today, writing to
+  `~/.salafleezers/sessions/<session_id>/`; **`storage.UserScopedStore`** wraps any backend,
+  namespacing IDs under `<user_id>/<session_id>` so sessions can't collide across principals.
+- **`workspace.WorkspaceStore`** is the equivalent for uploaded bytes, at
+  `~/.salafleezers/uploads/<user_id>/<dataset_id>/` — quota-enforced while streaming, with
+  sidecar-completeness checked against each `.dat` header on finalize.
+- **`auth.get_current_principal`** is a FastAPI dependency resolving *who's calling*, in three
+  modes: anonymous by default; a shared-secret bearer token (`SFZ_AUTH_TOKEN`) that
+  authenticates but doesn't distinguish callers; or a header set by an authenticating reverse
+  proxy (`SFZ_TRUSTED_USER_HEADER`) giving each caller a real, distinct identity — only honored
+  when that env var is explicitly configured, since trusting a client-settable header by default
+  would be an auth bypass. See the docstring in `web/auth.py` for exactly what each mode does
+  and doesn't do.
 
-The save/load routes compose these as `UserScopedStore(LocalFilesystemStore(), principal.user_id)`
-— swapping in a real database- or S3-backed `StorageBackend`, or a real OAuth/SSO principal
-resolver, means writing one new class each, with zero changes to the routes or to
-`analysis/`.
+Swapping in a database- or object-store-backed `StorageBackend`/`WorkspaceStore`, or a real
+OIDC principal resolver, means writing one new class each, with zero changes to the routes or to
+`analysis/`. What isn't yet behind such a seam: `sessions.SessionManager` itself is an in-memory,
+process-local singleton, so a multi-worker deployment isn't safe today — see the note in
+`sessions.py`.
 
 ## Frontend
 
@@ -87,7 +100,8 @@ runtime mismatch. Built assets are `force-include`d into the wheel at build time
 ## Data model
 
 One canonical shape (`web/schemas.py`) is used by the REST API, the WebSocket protocol, and (by
-construction, since the frontend's TypeScript types mirror it) the GUI — a `.dat`/`.h5`/`.mat`/
-`.npz` trace, an API payload, and a GUI session state are the same shape everywhere, which is
+construction, since the frontend's TypeScript types mirror it) the GUI — a `.dat`/`.h5`/`.npz`
+trace (`.mat` is currently write-only, produced by `sfz process --save-format mat` but not
+readable by the GUI), an API payload, and a GUI session state are the same shape everywhere, which is
 what let the [violin/distribution-comparison panel](../user-guide/gui-walkthrough.md) treat
 "multiple loaded files" as interchangeable groups with zero special-casing.

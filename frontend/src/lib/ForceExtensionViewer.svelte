@@ -1,8 +1,13 @@
 <script lang="ts">
   import type uPlot from 'uplot'
   import Plot from './Plot.svelte'
-  import { api, ApiError } from './api'
+  import RunButton from './ui/RunButton.svelte'
+  import { api } from './api'
   import { session } from './stores/session.svelte'
+  import { theme } from './stores/theme.svelte'
+  import { seriesColor, dangerColor } from './theme/plot'
+  import { useRun } from './ui/useRun.svelte'
+  import { formatApiError } from './ui/formatError'
   import type { WLCFitResult, WLCMethod } from './types'
 
   const TARGET_POINTS = 4000
@@ -20,8 +25,7 @@
   let P0 = $state(50.0)
   let S0 = $state(900.0)
   let fitOffsets = $state(true)
-  let fitting = $state(false)
-  let fitError = $state('')
+  const fitRun = useRun<WLCFitResult>()
   let fitResult = $state<WLCFitResult | null>(null)
 
   let lastFileId: string | null = null
@@ -73,7 +77,7 @@
       sortedX = pairs.map((p) => p[0])
       sortedF = pairs.map((p) => p[1])
     } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e)
+      loadError = formatApiError(e)
     } finally {
       loading = false
     }
@@ -89,24 +93,22 @@
   async function runFit() {
     const file = session.activeFile
     if (!file) return
-    fitting = true
-    fitError = ''
-    try {
-      fitResult = await api.wlcFit({
-        session_id: session.sessionId!,
-        file_id: file.file_id,
-        F_channel: fChannel,
-        x_channel: xChannel,
-        method,
-        P0,
-        S0,
-        fit_offsets: fitOffsets,
-      })
-    } catch (e) {
-      fitError = e instanceof ApiError ? `${e.status}: ${e.message}` : String(e)
-    } finally {
-      fitting = false
-    }
+    const r = await fitRun.run((signal) =>
+      api.wlcFit(
+        {
+          session_id: session.sessionId!,
+          file_id: file.file_id,
+          F_channel: fChannel,
+          x_channel: xChannel,
+          method,
+          P0,
+          S0,
+          fit_offsets: fitOffsets,
+        },
+        { signal },
+      ),
+    )
+    if (r) fitResult = r
   }
 
   let modelOnData = $derived.by((): number[] => {
@@ -120,11 +122,12 @@
   })
 
   let plotSeries = $derived.by((): uPlot.Series[] => {
+    theme.current
     const s: uPlot.Series[] = [
       {},
-      { label: `${fChannel} (data)`, stroke: '#7c3aed', paths: () => null, points: { show: true, size: 3 } },
+      { label: `${fChannel} (data)`, stroke: seriesColor(0), paths: () => null, points: { show: true, size: 3 } },
     ]
-    if (fitResult) s.push({ label: `WLC fit (${fitResult.method})`, stroke: '#dc2626', width: 2, points: { show: false } })
+    if (fitResult) s.push({ label: `WLC fit (${fitResult.method})`, stroke: dangerColor(), width: 2, points: { show: false } })
     return s
   })
 
@@ -134,12 +137,15 @@
     return arr as uPlot.AlignedData
   })
 
-  let residualSeries: uPlot.Series[] = [{}, { label: 'residual', stroke: '#059669', paths: () => null, points: { show: true, size: 3 } }]
+  let residualSeries = $derived.by((): uPlot.Series[] => {
+    theme.current
+    return [{}, { label: 'residual', stroke: seriesColor(4), paths: () => null, points: { show: true, size: 3 } }]
+  })
   let residualData = $derived.by((): uPlot.AlignedData => [sortedX, residuals] as uPlot.AlignedData)
 </script>
 
 {#if !session.activeFile}
-  <p class="muted">Open a file above to view its force-extension curve.</p>
+  <p class="muted">Open a file from the data rail to view its force-extension curve.</p>
 {:else}
   <div class="card row">
     <label>
@@ -160,18 +166,18 @@
     </label>
   </div>
 
-  <div class="card" style="margin-top:8px;">
+  <div class="card stack" style="margin-top: 8px;">
     {#if loading}<p class="muted">Loading…</p>{/if}
-    {#if loadError}<p style="color: var(--danger)">{loadError}</p>{/if}
+    {#if loadError}<p class="text-danger">{loadError}</p>{/if}
     <Plot bind:this={plotRef} data={plotData} series={plotSeries} height={340} cursor={false} />
-    <div class="row" style="margin-top:8px;">
+    <div class="row-center">
       <button onclick={() => plotRef?.exportPng(`${session.activeFile?.filename ?? 'force_ext'}_wlc.png`)}>
         Export PNG
       </button>
     </div>
   </div>
 
-  <div class="card row" style="margin-top:8px;">
+  <div class="card row" style="margin-top: 8px;">
     <label>
       Method
       <select bind:value={method}>
@@ -182,22 +188,21 @@
     </label>
     <label>
       P0 (nm)
-      <input type="number" step="1" bind:value={P0} style="width:80px" />
+      <input type="number" step="1" bind:value={P0} style="width: 80px" />
     </label>
     <label>
       S0 (pN)
-      <input type="number" step="10" bind:value={S0} style="width:90px" />
+      <input type="number" step="10" bind:value={S0} style="width: 90px" />
     </label>
     <label style="flex-direction: row; align-items: center; gap: 4px;">
       <input type="checkbox" bind:checked={fitOffsets} />
       Fit offsets
     </label>
-    <button class="primary" onclick={runFit} disabled={fitting}>{fitting ? 'Fitting…' : 'Fit WLC'}</button>
-    {#if fitError}<span style="color: var(--danger)">{fitError}</span>{/if}
+    <RunButton state={fitRun} label="Fit WLC" onRun={runFit} />
   </div>
 
   {#if fitResult}
-    <div class="card row" style="margin-top:8px;">
+    <div class="card row" style="margin-top: 8px;">
       <span class="mono">P = {fitResult.P_nm.toFixed(2)} nm</span>
       <span class="mono">Lc = {fitResult.Lc_nm.toFixed(1)} nm</span>
       <span class="mono">S = {fitResult.S_pN.toFixed(0)} pN</span>
@@ -206,9 +211,11 @@
       <span class="mono">χ² = {fitResult.chi2.toFixed(4)}</span>
     </div>
 
-    <div class="card" style="margin-top:8px;">
-      <strong class="muted" style="font-size:12px;">Residuals (data − model)</strong>
-      <Plot data={residualData} series={residualSeries} height={140} cursor={false} />
+    <div class="card" style="margin-top: 8px;">
+      <span class="label">Residuals (data − model)</span>
+      <div style="margin-top: 4px;">
+        <Plot data={residualData} series={residualSeries} height={140} cursor={false} />
+      </div>
     </div>
   {/if}
 {/if}

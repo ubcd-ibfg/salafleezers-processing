@@ -22,11 +22,25 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
-from salafleezers.web.api import analysis, files, sessions, traces
-from salafleezers.web.auth import Principal, get_current_principal
+from salafleezers.web.api import analysis, files, sessions, traces, uploads
+from salafleezers.web.auth import (
+    ANONYMOUS_USER_ID,
+    Principal,
+    auth_required,
+    consume_ticket,
+    get_current_principal,
+    issue_ticket,
+)
+from salafleezers.web.workspace import max_upload_bytes
 from salafleezers.web.ws.session import handle_session_ws
 
 _DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024   # 50 MB
+
+# File uploads are streamed straight to disk under their own per-file cap
+# (SFZ_MAX_UPLOAD_BYTES, enforced while writing in workspace.receive_file), so
+# the JSON-oriented body limit must not apply to them -- a 200 MB trace is a
+# normal upload but an absurd JSON payload.
+_UPLOAD_PATH_MARKER = "/api/uploads/"
 
 
 class _BodySizeLimitMiddleware(BaseHTTPMiddleware):
@@ -37,6 +51,10 @@ class _BodySizeLimitMiddleware(BaseHTTPMiddleware):
     in front of that -- otherwise a single request with an enormous JSON
     array (e.g. millions of ``dwell_times``) can exhaust memory regardless
     of the field-level bounds on the parsed model.
+
+    File-upload routes are exempted from this cap and bounded by
+    ``SFZ_MAX_UPLOAD_BYTES`` instead, enforced mid-stream rather than from the
+    client-reported ``Content-Length`` (which can lie).
     """
 
     def __init__(self, app, max_bytes: int) -> None:
@@ -44,10 +62,14 @@ class _BodySizeLimitMiddleware(BaseHTTPMiddleware):
         self.max_bytes = max_bytes
 
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        is_upload = path.startswith(_UPLOAD_PATH_MARKER) and path.endswith("/files")
+        limit = max_upload_bytes() if is_upload else self.max_bytes
+
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
-                if int(content_length) > self.max_bytes:
+                if int(content_length) > limit:
                     return PlainTextResponse("Request body too large", status_code=413)
             except ValueError:
                 pass
@@ -183,24 +205,54 @@ def create_app(
     # REST routers
     app.include_router(sessions.router)
     app.include_router(files.router)
+    app.include_router(uploads.router)
     app.include_router(traces.router)
     app.include_router(analysis.router)
+
+    @app.post("/api/ws-ticket", tags=["meta"])
+    async def ws_ticket(
+        principal: Principal = Depends(get_current_principal),
+    ) -> dict:
+        """Mint a short-lived single-use ticket for the session WebSocket.
+
+        Browsers cannot set an ``Authorization`` header on a WebSocket
+        handshake, so the socket is authenticated with a ticket obtained from
+        this (header-authenticated) endpoint instead of a long-lived token in
+        the query string.
+        """
+        ticket, ttl = issue_ticket(principal.user_id)
+        return {"ticket": ticket, "expires_in": ttl}
 
     # WebSocket
     @app.websocket("/ws/session/{session_id}")
     async def ws_session(
         websocket: WebSocket,
         session_id: str,
-        principal: Principal = Depends(get_current_principal),
+        ticket: str | None = None,
     ) -> None:
+        if auth_required():
+            user_id = consume_ticket(ticket) if ticket else None
+            if user_id is None:
+                await websocket.close(code=4401)
+                return
+        else:
+            # Local-first default: no auth configured, so no ticket needed.
+            user_id = ANONYMOUS_USER_ID
+
         await handle_session_ws(
-            websocket, session_id, principal.user_id, allowed_origins=origins
+            websocket, session_id, user_id, allowed_origins=origins
         )
 
     # Health check
     @app.get("/api/health", tags=["meta"])
     async def health() -> dict:
-        return {"status": "ok", "version": "0.2.0"}
+        """Health plus the handful of capabilities the SPA needs at boot."""
+        return {
+            "status": "ok",
+            "version": "0.2.0",
+            "auth_required": auth_required(),
+            "max_upload_bytes": max_upload_bytes(),
+        }
 
     # SPA static files (Phase 4+)
     if serve_spa and _SPA_DIR.exists():

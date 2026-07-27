@@ -1,7 +1,6 @@
 # Force & extension
 
-Implemented in `salafleezers.processing.pipeline.process_one` (ported from
-`ProcessOneDataV2.m`) and `salafleezers.analysis.wlc`.
+Implemented in `salafleezers.processing.pipeline.process_one` and `salafleezers.analysis.wlc`.
 
 ## From calibrated voltage to force and extension
 
@@ -49,7 +48,7 @@ forces (the "eXtensible WLC", XWLC).
   \[
   \frac{x}{L_c} \approx 1 - \frac{1}{2}\sqrt{\frac{k_BT}{PF}} + \frac{F}{S}
   \]
-  This is a **literal, golden-verified port** of MATLAB's `XWLC.m` method 1 — see
+  Golden-tested against an independently computed reference — see
   [Testing & golden files](../developer/testing-golden-files.md).
 
 - **`"marko_siggia"`** — the full Marko-Siggia (1995) interpolation formula, self-consistently
@@ -64,15 +63,14 @@ forces (the "eXtensible WLC", XWLC).
   equation above for a substantially more accurate fit near \(t\to1\) (full extension).
 
 !!! note "Why only `basic` is golden-tested"
-    MATLAB's `XWLC.m` has three methods too, but methods 2 ("legacy"/phage-specific) and 3
-    ("wikipedia") are **not** literally ported — `"marko_siggia"` and `"bouchiat"` are standard
-    alternative formulations chosen instead, not reimplementations of MATLAB's exact method-2/3
-    algebra. Only method 1 is a byte-for-byte port, and only it is validated against real
-    MATLAB output. See `COMPARISON.md` for the full reasoning.
+    `"marko_siggia"` and `"bouchiat"` are standard alternative formulations from the literature
+    cited above, not variants of the `"basic"` method's exact algebra, so there's no shared
+    reference output to validate them against the same way. Only `"basic"` has an independently
+    computed golden fixture.
 
 ## Fitting
 
-`salafleezers.analysis.wlc.fit_force_ext` (port of `fitForceExt.m`) fits \(P\), \(L_c\),
+`salafleezers.analysis.wlc.fit_force_ext` fits \(P\), \(L_c\),
 optionally \(S\), and optionally \(x\)/\(F\) offsets to an experimental \((F, x)\) curve via
 `scipy.optimize.least_squares`, minimizing the residual between measured extension and the
 model's predicted extension at each measured force. Both the CLI (`sfz wlc-fit`) and the GUI's

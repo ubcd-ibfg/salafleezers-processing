@@ -1,8 +1,12 @@
 <script lang="ts">
   import uPlot from 'uplot'
   import Plot from '../Plot.svelte'
-  import { api, ApiError } from '../api'
+  import RunButton from '../ui/RunButton.svelte'
+  import { api } from '../api'
   import { session } from '../stores/session.svelte'
+  import { theme } from '../stores/theme.svelte'
+  import { seriesColor, seriesFill, dangerColor } from '../theme/plot'
+  import { useRun } from '../ui/useRun.svelte'
   import type { KineticsModel, KineticsResult, StepFindResult } from '../types'
 
   let { stepResult }: { stepResult: StepFindResult | null } = $props()
@@ -11,8 +15,8 @@
   let nComponents = $state(1)
   let nRestarts = $state(3)
   let manualDwellTimes = $state('')
-  let running = $state(false)
-  let error = $state('')
+
+  const runState = useRun<KineticsResult>()
   let result = $state<KineticsResult | null>(null)
 
   function dwellTimesFromSteps(r: StepFindResult): number[] {
@@ -50,26 +54,24 @@
     const file = session.activeFile
     if (!file) return
     if (!dwellTimes.length && !stepResult) {
-      error = 'Run step-find above, or paste dwell times manually'
+      runState.error = 'Run step-find above, or paste dwell times manually'
       return
     }
-    running = true
-    error = ''
-    try {
-      result = await api.kineticsFit({
-        session_id: session.sessionId!,
-        file_id: file.file_id,
-        dwell_times: manualDwellTimes.trim() ? dwellTimes : undefined,
-        step_result_id: !manualDwellTimes.trim() ? stepResult?.result_id : undefined,
-        model,
-        n_components: nComponents,
-        n_restarts: nRestarts,
-      })
-    } catch (e) {
-      error = e instanceof ApiError ? `${e.status}: ${e.message}` : String(e)
-    } finally {
-      running = false
-    }
+    const r = await runState.run((signal) =>
+      api.kineticsFit(
+        {
+          session_id: session.sessionId!,
+          file_id: file.file_id,
+          dwell_times: manualDwellTimes.trim() ? dwellTimes : undefined,
+          step_result_id: !manualDwellTimes.trim() ? stepResult?.result_id : undefined,
+          model,
+          n_components: nComponents,
+          n_restarts: nRestarts,
+        },
+        { signal },
+      ),
+    )
+    if (r) result = r
   }
 
   const barsPath = uPlot.paths.bars!({ size: [0.9, 100] })
@@ -94,12 +96,13 @@
   })
 
   let plotSeries = $derived.by((): uPlot.Series[] => {
+    theme.current
     const s: uPlot.Series[] = [
       {},
-      { label: 'dwell times', stroke: '#7c3aed', fill: 'rgba(124,58,237,0.3)', paths: barsPath, points: { show: false } },
+      { label: 'dwell times', stroke: seriesColor(0), fill: seriesFill(0), paths: barsPath, points: { show: false } },
     ]
     if (result && result.model === 'exponential') {
-      s.push({ label: 'fit (scaled)', stroke: '#dc2626', width: 2, points: { show: false } })
+      s.push({ label: 'fit (scaled)', stroke: dangerColor(), width: 2, points: { show: false } })
     }
     return s
   })
@@ -115,19 +118,18 @@
   </label>
   <label>
     Components
-    <input type="number" min="1" max="4" bind:value={nComponents} style="width:70px" />
+    <input type="number" min="1" max="4" bind:value={nComponents} style="width: 70px" />
   </label>
   <label>
     Restarts
-    <input type="number" min="1" bind:value={nRestarts} style="width:70px" />
+    <input type="number" min="1" bind:value={nRestarts} style="width: 70px" />
   </label>
-  <button class="primary" onclick={run} disabled={running}>{running ? 'Fitting…' : 'Fit dwell times'}</button>
-  {#if error}<span style="color: var(--danger)">{error}</span>{/if}
+  <RunButton state={runState} label="Fit dwell times" onRun={run} />
 </div>
 
-<label style="margin-top:6px;">
+<label style="margin-top: 6px;">
   Manual dwell times (overrides step-find result if non-empty)
-  <input type="text" bind:value={manualDwellTimes} placeholder="0.5, 1.2, 0.8, …" style="width:100%" />
+  <input type="text" bind:value={manualDwellTimes} placeholder="0.5, 1.2, 0.8, …" style="width: 100%" />
 </label>
 
 {#if !stepResult && !manualDwellTimes.trim()}
@@ -135,13 +137,13 @@
 {/if}
 
 {#if dwellTimes.length}
-  <div style="margin-top:8px;">
+  <div style="margin-top: 8px;">
     <Plot data={plotData} series={plotSeries} height={220} cursor={false} />
   </div>
 {/if}
 
 {#if result}
-  <div class="row" style="margin-top:8px;">
+  <div class="row" style="margin-top: 8px;">
     {#if result.model === 'exponential'}
       <span class="mono">rates = [{result.rates?.map((r) => r.toFixed(3)).join(', ')}] s⁻¹</span>
       <span class="mono">amplitudes = [{result.amplitudes?.map((a) => a.toFixed(3)).join(', ')}]</span>
@@ -150,6 +152,6 @@
       <span class="mono">scales = [{result.scales?.map((s) => s.toFixed(3)).join(', ')}]</span>
       <span class="mono">amplitudes = [{result.amplitudes?.map((a) => a.toFixed(3)).join(', ')}]</span>
     {/if}
-    <span class="muted mono">AIC {result.aic.toFixed(2)} · BIC {result.bic.toFixed(2)}</span>
+    <span class="dim mono">AIC {result.aic.toFixed(2)} · BIC {result.bic.toFixed(2)}</span>
   </div>
 {/if}

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 
+import anyio.to_thread
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -116,7 +117,7 @@ async def _handle_filter(ws: WebSocket, session: Session, msg: dict) -> None:
     """Apply a sliding-window filter and stream back the decimated result."""
     from salafleezers.analysis.filters import window_filter
 
-    f, ch, err = _get_channel(session, msg)
+    f, ch, err = await _get_channel(session, msg)
     if err:
         await ws.send_json({"type": "error", "detail": err})
         return
@@ -124,13 +125,19 @@ async def _handle_filter(ws: WebSocket, session: Session, msg: dict) -> None:
     half_width = _clamped_int(msg, "half_width", 5, 1, _MAX_HALF_WIDTH)
     decimate = _clamped_int(msg, "decimate", 100, 1, _MAX_DECIMATE)
 
-    filtered = window_filter(ch, fn="mean", half_width=half_width)
+    def compute() -> dict:
+        filtered = window_filter(ch, fn="mean", half_width=half_width)
+        return {
+            "time": f.time[::decimate].tolist(),
+            "data": filtered[::decimate].tolist(),
+        }
+
+    payload = await anyio.to_thread.run_sync(compute)
     await ws.send_json({
         "type": "trace",
         "file_id": msg.get("file_id"),
         "channel": msg.get("channel"),
-        "time": f.time[::decimate].tolist(),
-        "data": filtered[::decimate].tolist(),
+        **payload,
     })
 
 
@@ -139,7 +146,7 @@ async def _handle_crop(ws: WebSocket, session: Session, msg: dict) -> None:
     from salafleezers.analysis.crop import crop
 
     file_id = msg.get("file_id")
-    f = session.files.get(file_id)
+    f = await anyio.to_thread.run_sync(session.get_file, file_id)
     if f is None:
         await ws.send_json({"type": "error", "detail": "File not found"})
         return
@@ -151,17 +158,21 @@ async def _handle_crop(ws: WebSocket, session: Session, msg: dict) -> None:
     decimate = _clamped_int(msg, "decimate", 100, 1, _MAX_DECIMATE)
     channel_names = msg.get("channels", list(f.channels.keys())[:4])[:_MAX_CHANNELS]
 
-    time64 = f.time64   # resolved once, reused for every requested channel below
-    ch_out: dict = {}
-    for ch_name in channel_names:
-        ch = f.resolve_channel64(ch_name)
-        if ch is None:
-            continue
-        ch_crop, t_crop = crop(ch, time64, t_start, t_end)
-        ch_out[ch_name] = {
-            "time": t_crop[::decimate].tolist(),
-            "data": ch_crop[::decimate].tolist(),
-        }
+    def compute() -> dict:
+        time64 = f.time64   # resolved once, reused for every requested channel below
+        out: dict = {}
+        for ch_name in channel_names:
+            ch = f.resolve_channel64(ch_name)
+            if ch is None:
+                continue
+            ch_crop, t_crop = crop(ch, time64, t_start, t_end)
+            out[ch_name] = {
+                "time": t_crop[::decimate].tolist(),
+                "data": ch_crop[::decimate].tolist(),
+            }
+        return out
+
+    ch_out = await anyio.to_thread.run_sync(compute)
 
     await ws.send_json({
         "type": "crop_ack",
@@ -176,7 +187,7 @@ async def _handle_measure(ws: WebSocket, session: Session, msg: dict) -> None:
     """Return statistics over a time region of a channel."""
     from salafleezers.analysis.crop import measure
 
-    f, ch, err = _get_channel(session, msg)
+    f, ch, err = await _get_channel(session, msg)
     if err:
         await ws.send_json({"type": "error", "detail": err})
         return
@@ -187,7 +198,9 @@ async def _handle_measure(ws: WebSocket, session: Session, msg: dict) -> None:
         await ws.send_json({"type": "error", "detail": "'t_start' and 't_end' required"})
         return
 
-    stats = measure(ch, f.time64, float(t_start), float(t_end))
+    stats = await anyio.to_thread.run_sync(
+        measure, ch, f.time64, float(t_start), float(t_end)
+    )
     await ws.send_json({"type": "measurement", "file_id": msg.get("file_id"), **stats})
 
 
@@ -195,26 +208,31 @@ async def _handle_decimate(ws: WebSocket, session: Session, msg: dict) -> None:
     """Return a decimated viewport segment without filtering."""
     from salafleezers.analysis.crop import crop
 
-    f, ch, err = _get_channel(session, msg)
+    f, ch, err = await _get_channel(session, msg)
     if err:
         await ws.send_json({"type": "error", "detail": err})
         return
 
     factor = _clamped_int(msg, "factor", 100, 1, _MAX_DECIMATE)
-    time = f.time64
-    data = ch
-
     t_start = msg.get("t_start")
     t_end = msg.get("t_end")
-    if t_start is not None and t_end is not None:
-        data, time = crop(data, time, float(t_start), float(t_end))
 
+    def compute() -> dict:
+        time = f.time64
+        data = ch
+        if t_start is not None and t_end is not None:
+            data, time = crop(data, time, float(t_start), float(t_end))
+        return {
+            "time": time[::factor].tolist(),
+            "data": data[::factor].tolist(),
+        }
+
+    payload = await anyio.to_thread.run_sync(compute)
     await ws.send_json({
         "type": "trace",
         "file_id": msg.get("file_id"),
         "channel": msg.get("channel"),
-        "time": time[::factor].tolist(),
-        "data": data[::factor].tolist(),
+        **payload,
     })
 
 
@@ -222,22 +240,27 @@ async def _handle_decimate(ws: WebSocket, session: Session, msg: dict) -> None:
 # Utilities
 # ---------------------------------------------------------------------------
 
-def _get_channel(
+async def _get_channel(
     session: Session, msg: dict
 ) -> tuple[LoadedFile | None, np.ndarray | None, str | None]:
     """Extract and resolve file + channel (float64) from a WS message.
+
+    Runs in a worker thread: both the rehydrate-on-cache-miss inside
+    ``get_file`` and the float64 cast inside ``resolve_channel64`` are
+    blocking and can be large, so neither belongs on the event loop.
 
     Returns (file, array, None) on success or (None, None, error_str) on failure.
     """
     file_id = msg.get("file_id")
     channel = msg.get("channel", "force")
 
-    f = session.files.get(file_id)
-    if f is None:
-        return None, None, "File not found"
+    def resolve() -> tuple[LoadedFile | None, np.ndarray | None, str | None]:
+        f = session.get_file(file_id)
+        if f is None:
+            return None, None, "File not found"
+        ch = f.resolve_channel64(channel)
+        if ch is None:
+            return None, None, f"Channel '{channel}' not found"
+        return f, ch, None
 
-    ch = f.resolve_channel64(channel)
-    if ch is None:
-        return None, None, f"Channel '{channel}' not found"
-
-    return f, ch, None
+    return await anyio.to_thread.run_sync(resolve)

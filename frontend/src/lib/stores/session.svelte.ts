@@ -1,6 +1,6 @@
 import { api } from '../api'
 import { SessionSocket } from '../ws'
-import type { TracePreview } from '../types'
+import type { FileOpenRequest, TracePreview } from '../types'
 
 export interface LoadedFile {
   file_id: string
@@ -10,6 +10,8 @@ export interface LoadedFile {
   sampling_rate_hz: number
   duration_s: number
 }
+
+export type FileRef = { path: string } | { datasetId: string; relativePath: string }
 
 class SessionStore {
   sessionId = $state<string | null>(null)
@@ -61,9 +63,18 @@ class SessionStore {
     this.activeFileId = entry.file_id
   }
 
-  async openFile(path: string): Promise<TracePreview> {
+  /**
+   * Open a file either by an uploaded-dataset reference or (legacy,
+   * server-path) reference. The UI only ever constructs the dataset form —
+   * `{path}` exists for completeness/testing, not as a user-facing input.
+   */
+  async openFile(ref: FileRef): Promise<TracePreview> {
     if (!this.sessionId) throw new Error('Session not initialized')
-    const preview = await api.openFile({ path, session_id: this.sessionId })
+    const body: FileOpenRequest =
+      'path' in ref
+        ? { path: ref.path, session_id: this.sessionId }
+        : { dataset_id: ref.datasetId, relative_path: ref.relativePath, session_id: this.sessionId }
+    const preview = await api.openFile(body)
     this.addFile(preview)
     return preview
   }
