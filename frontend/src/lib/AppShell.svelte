@@ -1,11 +1,12 @@
 <script lang="ts">
   import DataRail from './data/DataRail.svelte'
+  import Home from './Home.svelte'
   import TraceViewer from './TraceViewer.svelte'
   import ForceExtensionViewer from './ForceExtensionViewer.svelte'
   import { session } from './stores/session.svelte'
   import { theme } from './stores/theme.svelte'
 
-  let { view = $bindable() }: { view: 'trace' | 'force-ext' } = $props()
+  let { view = $bindable() }: { view: 'home' | 'trace' | 'force-ext' } = $props()
 
   let saveMsg = $state('')
   let showShortcuts = $state(false)
@@ -23,12 +24,13 @@
 </script>
 
 <header class="topbar">
-  <div class="brand">
+  <button class="brand" onclick={() => (view = 'home')} title="Home (`)">
     <img src="/logo.png" alt="SalaFleezer logo" class="brand-logo" />
     SalaFleezer
-  </div>
+  </button>
 
   <div class="tabs">
+    <button class:active={view === 'home'} onclick={() => (view = 'home')}>Home</button>
     <button class:active={view === 'trace'} onclick={() => (view = 'trace')}>Trace Viewer</button>
     <button class:active={view === 'force-ext'} onclick={() => (view = 'force-ext')}>Force-Extension</button>
   </div>
@@ -69,6 +71,7 @@
         <button class="ghost" onclick={() => (showShortcuts = false)}>Close</button>
       </div>
       <dl class="stack mono" style="font-size: var(--text-sm); margin-top: var(--s-2);">
+        <div class="shortcut-row"><dt>`</dt><dd>home</dd></div>
         <div class="shortcut-row"><dt>1 / 2</dt><dd>switch view</dd></div>
         <div class="shortcut-row"><dt>t</dt><dd>toggle theme</dd></div>
         <div class="shortcut-row"><dt>⌘/Ctrl + S</dt><dd>save session</dd></div>
@@ -84,16 +87,20 @@
   </div>
 {/if}
 
-<div class="body">
-  <DataRail />
-  <main class="canvas">
-    {#if view === 'trace'}
-      <TraceViewer />
-    {:else}
-      <ForceExtensionViewer />
-    {/if}
-  </main>
-</div>
+{#if view === 'home'}
+  <Home onNavigate={(v) => (view = v)} />
+{:else}
+  <div class="body">
+    <DataRail />
+    <main class="canvas">
+      {#if view === 'trace'}
+        <TraceViewer />
+      {:else}
+        <ForceExtensionViewer />
+      {/if}
+    </main>
+  </div>
+{/if}
 
 <style>
   .topbar {
@@ -111,6 +118,12 @@
     font-weight: 600;
     color: var(--text-h);
     white-space: nowrap;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: var(--s-1) var(--s-2);
+  }
+  .brand:hover {
+    border-color: var(--border);
   }
   .brand-logo {
     width: 22px;

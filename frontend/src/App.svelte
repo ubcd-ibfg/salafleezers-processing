@@ -7,7 +7,7 @@
   import { session } from './lib/stores/session.svelte'
   import { theme } from './lib/stores/theme.svelte'
 
-  let view = $state<'trace' | 'force-ext'>('trace')
+  let view = $state<'home' | 'trace' | 'force-ext'>('home')
 
   function isTyping(target: EventTarget | null): boolean {
     const el = target as HTMLElement | null
@@ -22,6 +22,7 @@
     }
     if (isTyping(e.target)) return
     if (e.key === 't') theme.toggle()
+    else if (e.key === '`') view = 'home'
     else if (e.key === '1') view = 'trace'
     else if (e.key === '2') view = 'force-ext'
   }
