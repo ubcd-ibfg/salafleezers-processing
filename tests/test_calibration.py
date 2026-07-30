@@ -97,5 +97,41 @@ class TestFitting:
         x, fs, _, _ = lorentzian_spectrum
         result = calibrate(x, fs, f_min=100.0)
         for attr in ("fc", "D", "alpha", "kappa", "drag", "D_theory",
-                     "fit_params", "F_fit", "P_fit", "F_full", "P_full"):
+                     "fit_params", "F_fit", "P_fit", "F_full", "P_full",
+                     "chi2", "converged"):
             assert hasattr(result, attr)
+
+    def test_calibrate_reports_convergence(self, lorentzian_spectrum):
+        """A fit on a clean synthetic spectrum should converge with low chi2."""
+        x, fs, _, _ = lorentzian_spectrum
+        result = calibrate(x, fs, f_min=100.0, f_max=20000.0, n_alias=0)
+        assert result.converged is True
+        assert result.chi2 >= 0.0
+
+    def test_fit_lorentzian_full_output(self):
+        """full_output=True returns (params, OptimizeResult) without changing params."""
+        from salafleezers.calibration.fit import fit_lorentzian
+
+        rng = np.random.default_rng(7)
+        Fb = np.linspace(100, 10000, 200)
+        fc_true, D_true = 1500.0, 5e-5
+        Pb = lorentzian_pure([fc_true, D_true], Fb, fs=62500.0)
+
+        params_only = fit_lorentzian(Fb, Pb, fc_true, D_true, fs=62500.0)
+        params, result = fit_lorentzian(Fb, Pb, fc_true, D_true, fs=62500.0, full_output=True)
+
+        np.testing.assert_array_equal(params_only, params)
+        assert hasattr(result, "success")
+        assert hasattr(result, "fun")
+
+    def test_calibrate_raises_on_empty_fit_range(self, lorentzian_spectrum):
+        """f_min >= f_max leaves no points to fit -- should raise, not fit garbage."""
+        x, fs, _, _ = lorentzian_spectrum
+        with pytest.raises(ValueError):
+            calibrate(x, fs, f_min=20000.0, f_max=100.0)
+
+    def test_calibrate_raises_when_f_min_above_spectrum(self, lorentzian_spectrum):
+        """f_min above every binned frequency also leaves nothing to fit."""
+        x, fs, _, _ = lorentzian_spectrum
+        with pytest.raises(ValueError):
+            calibrate(x, fs, f_min=fs, f_max=fs / 2)

@@ -64,31 +64,13 @@ def _ref_and_path(request: FileOpenRequest, user_id: str) -> tuple[FileRef, Path
     return FileRef(kind="path", path=str(path)), path
 
 
-@router.post("/open", response_model=TracePreview, status_code=201)
-def open_file(
-    request: FileOpenRequest, principal: Principal = Depends(get_current_principal)
-):
-    """Parse a file into a session, by uploaded-dataset reference or server path.
+def _open_into_session(session, ref: FileRef, path: Path) -> TracePreview:
+    """Parse *path* and register it in *session*, returning a decimated preview.
 
-    Creates a new session if ``session_id`` is not provided.
-    Returns a decimated preview of every channel.
+    Shared by ``POST /api/files/open`` and ``POST /api/process`` (which opens
+    its freshly written force/extension artifact the same way an uploaded
+    file would be opened).
     """
-    ref, path = _ref_and_path(request, principal.user_id)
-    if not path.exists():
-        detail = (
-            f"File not found in dataset: {request.relative_path}"
-            if ref.kind == "dataset" else f"File not found: {path}"
-        )
-        raise HTTPException(status_code=404, detail=detail)
-
-    if request.session_id:
-        try:
-            session = session_manager.get_owned(request.session_id, principal.user_id)
-        except KeyError:
-            raise HTTPException(status_code=404, detail="Session not found")
-    else:
-        session = session_manager.create(user_id=principal.user_id)
-
     try:
         channels, time, meta, filename = load_file(path)
     except ValueError as exc:
@@ -124,6 +106,34 @@ def open_file(
         sampling_rate_hz=fs,
         filename=filename,
     )
+
+
+@router.post("/open", response_model=TracePreview, status_code=201)
+def open_file(
+    request: FileOpenRequest, principal: Principal = Depends(get_current_principal)
+):
+    """Parse a file into a session, by uploaded-dataset reference or server path.
+
+    Creates a new session if ``session_id`` is not provided.
+    Returns a decimated preview of every channel.
+    """
+    ref, path = _ref_and_path(request, principal.user_id)
+    if not path.exists():
+        detail = (
+            f"File not found in dataset: {request.relative_path}"
+            if ref.kind == "dataset" else f"File not found: {path}"
+        )
+        raise HTTPException(status_code=404, detail=detail)
+
+    if request.session_id:
+        try:
+            session = session_manager.get_owned(request.session_id, principal.user_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        session = session_manager.create(user_id=principal.user_id)
+
+    return _open_into_session(session, ref, path)
 
 
 @router.get("/{file_id}/info", response_model=TraceMetadata)

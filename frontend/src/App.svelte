@@ -7,7 +7,7 @@
   import { session } from './lib/stores/session.svelte'
   import { theme } from './lib/stores/theme.svelte'
 
-  let view = $state<'home' | 'trace' | 'force-ext'>('home')
+  let view = $state<'home' | 'trace' | 'calibrate' | 'force-ext'>('home')
 
   function isTyping(target: EventTarget | null): boolean {
     const el = target as HTMLElement | null
@@ -24,7 +24,8 @@
     if (e.key === 't') theme.toggle()
     else if (e.key === '`') view = 'home'
     else if (e.key === '1') view = 'trace'
-    else if (e.key === '2') view = 'force-ext'
+    else if (e.key === '2') view = 'calibrate'
+    else if (e.key === '3') view = 'force-ext'
   }
 
   async function boot() {

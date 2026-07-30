@@ -7,6 +7,7 @@ directly into the in-memory SessionManager.
 
 from __future__ import annotations
 
+import io
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ import pytest
 # Import the app factory + internals we'll manipulate in tests
 from salafleezers.web.app import create_app
 from salafleezers.web.sessions import FileRef, LoadedFile, Session, session_manager
+from salafleezers.web.workspace import WorkspaceStore
 
 from fastapi.testclient import TestClient
 
@@ -897,3 +899,244 @@ def test_ws_invalid_json(client, synthetic_session):
         ws.send_text("not json {{")
         data = ws.receive_json()
         assert data["type"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Calibration + processing (POST /api/calibrate, POST /api/process)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def calibration_session(tmp_path):
+    """Inject a session with a synthetic calibration .dat's parsed channels.
+
+    Reuses the same Lorentzian OU-process generator the pure calibration
+    tests use (tests/conftest.py::make_lorentzian_channel_data), but goes
+    through the real binary writer + reader so channel names/polarities
+    come from the actual .dat format rather than being hand-assembled.
+    """
+    from tests.conftest import make_dat_file, make_lorentzian_channel_data
+    from salafleezers.io.reader import read_dat
+
+    n_ch, n_samples, fs = 13, 65536, 62500.0
+    lor_data = make_lorentzian_channel_data(n_ch, n_samples, fs=fs)
+    cal_path = make_dat_file(
+        tmp_path / "230415_003.dat", n_samples=n_samples,
+        n_channels=n_ch, channel_data=lor_data, fs=fs,
+    )
+    dat = read_dat(cal_path, skip_fl=True)
+
+    file_id = str(uuid.uuid4())
+    session = Session(session_id=str(uuid.uuid4()), created_at=datetime.now())
+    session.add_file(
+        file_id,
+        FileRef(kind="path", path=str(cal_path)),
+        LoadedFile(
+            file_id=file_id, filename=cal_path.name, path=str(cal_path),
+            n_samples=n_samples, sampling_rate_hz=fs,
+            channels=dat.channels, time=dat.time, meta=dat.meta,
+        ),
+    )
+    session_manager._sessions[session.session_id] = session
+    yield session, file_id
+    session_manager.delete(session.session_id)
+
+
+class TestCalibrateEndpoint:
+    def test_recovers_fc_on_all_axes(self, client, calibration_session):
+        session, file_id = calibration_session
+        r = client.post("/api/calibrate", json={
+            "session_id": session.session_id, "file_id": file_id,
+            "f_min_hz": 100.0, "f_max_hz": 20000.0, "n_alias": 0,
+        })
+        assert r.status_code == 201
+        body = r.json()
+        assert body["skipped"] == []
+        assert {a["detector"] for a in body["axes"]} == {"AX", "BX", "AY", "BY"}
+        for axis in body["axes"]:
+            # Same 20% tolerance test_calibrate_recovers_parameters uses for
+            # the pure function -- the endpoint must reproduce it exactly.
+            assert abs(axis["fc_hz"] - 1000.0) / 1000.0 < 0.20
+            assert axis["alpha_nm_v"] > 0
+            assert axis["kappa_pn_nm"] > 0
+            assert axis["chi2"] >= 0.0
+            assert len(axis["f_binned"]) == len(axis["psd_binned"])
+            assert len(axis["f_model"]) == len(axis["psd_model"])
+
+    def test_caches_result_on_session(self, client, calibration_session):
+        session, file_id = calibration_session
+        r = client.post("/api/calibrate", json={
+            "session_id": session.session_id, "file_id": file_id, "n_alias": 0,
+        })
+        result_id = r.json()["result_id"]
+        assert result_id in session.calibration_results
+
+    def test_unknown_session_returns_404(self, client):
+        r = client.post("/api/calibrate", json={
+            "session_id": "nope", "file_id": "nope",
+        })
+        assert r.status_code == 404
+
+    def test_unknown_file_returns_404(self, client, calibration_session):
+        session, _ = calibration_session
+        r = client.post("/api/calibrate", json={
+            "session_id": session.session_id, "file_id": "nope",
+        })
+        assert r.status_code == 404
+
+    def test_empty_fit_range_returns_422(self, client, calibration_session):
+        session, file_id = calibration_session
+        r = client.post("/api/calibrate", json={
+            "session_id": session.session_id, "file_id": file_id,
+            "f_min_hz": 20000.0, "f_max_hz": 100.0,
+        })
+        assert r.status_code == 422
+
+    def test_skips_missing_detectors(self, client, calibration_session):
+        session, file_id = calibration_session
+        f = session.get_file(file_id)
+        del f.channels["AY"]
+        del f.channels["BY"]
+        r = client.post("/api/calibrate", json={
+            "session_id": session.session_id, "file_id": file_id, "n_alias": 0,
+        })
+        assert r.status_code == 201
+        body = r.json()
+        assert set(body["skipped"]) == {"AY", "BY"}
+        assert {a["detector"] for a in body["axes"]} == {"AX", "BX"}
+
+
+@pytest.fixture
+def process_store(tmp_path, monkeypatch):
+    """Point every module touching the upload workspace at a temp root.
+
+    Three modules import ``workspace_store`` by value (mirrors the
+    ``upload_store`` fixture in test_uploads.py, extended for calibration.py).
+    """
+    store = WorkspaceStore(root=tmp_path / "uploads")
+    monkeypatch.setattr("salafleezers.web.workspace.workspace_store", store)
+    monkeypatch.setattr("salafleezers.web.api.uploads.workspace_store", store)
+    monkeypatch.setattr("salafleezers.web.api.calibration.workspace_store", store)
+    return store
+
+
+@pytest.fixture
+def process_client(app, process_store):
+    return TestClient(app)
+
+
+def _upload_bytes(client, dataset_id, relative_path, content: bytes):
+    return client.post(
+        f"/api/uploads/{dataset_id}/files",
+        data={"relative_path": relative_path},
+        files={"file": (relative_path.rsplit("/", 1)[-1], io.BytesIO(content))},
+    )
+
+
+class TestProcessEndpoint:
+    def _upload_triplet(self, client, tmp_path):
+        """Upload a data/offset/calibration .dat triplet (no _pos sidecar)."""
+        from tests.conftest import make_dat_file, make_lorentzian_channel_data
+
+        n_ch, n_samples, fs = 13, 65536, 62500.0
+        lor_data = make_lorentzian_channel_data(n_ch, n_samples, fs=fs)
+        make_dat_file(tmp_path / "230415_003.dat", n_samples=n_samples,
+                      n_channels=n_ch, channel_data=lor_data, fs=fs)
+        for num in (1, 2):
+            make_dat_file(tmp_path / f"230415_{num:03d}.dat",
+                          n_samples=n_samples, n_channels=n_ch, fs=fs)
+
+        dataset_id = client.post("/api/uploads", json={"name": "230415"}).json()["dataset_id"]
+        for name in ("230415_001.dat", "230415_002.dat", "230415_003.dat"):
+            r = _upload_bytes(client, dataset_id, name, (tmp_path / name).read_bytes())
+            assert r.status_code == 201
+        client.post(f"/api/uploads/{dataset_id}/finalize")
+        return dataset_id
+
+    def test_produces_force_extension_trace_with_missing_pos_warning(
+        self, process_client, tmp_path
+    ):
+        client = process_client
+        dataset_id = self._upload_triplet(client, tmp_path)
+        session_id = client.post("/api/sessions").json()["session_id"]
+
+        r = client.post("/api/process", json={
+            "session_id": session_id,
+            "data": {"dataset_id": dataset_id, "relative_path": "230415_001.dat"},
+            "offset": {"dataset_id": dataset_id, "relative_path": "230415_002.dat"},
+            "calibration": {"dataset_id": dataset_id, "relative_path": "230415_003.dat"},
+            "f_min_hz": 100.0, "f_max_hz": 20000.0, "n_alias": 0,
+            "save_format": "npz",
+        })
+        assert r.status_code == 201
+        body = r.json()
+
+        assert body["relative_path"].startswith("processed/")
+        assert "force" in body["preview"]["channels"]
+        assert "extension" in body["preview"]["channels"]
+        n = body["preview"]["n_original"]
+        for chan_values in body["preview"]["channels"].values():
+            assert len(chan_values) == len(body["preview"]["time"])
+        assert n > 0
+        assert any("_pos" in w for w in body["warnings"])
+        assert {a["detector"] for a in body["calibration"]["axes"]} == {"AX", "BX", "AY", "BY"}
+
+        # The processed file must be registered back into the dataset.
+        ds = client.get(f"/api/uploads/{dataset_id}").json()
+        processed = [e for e in ds["entries"] if e["relative_path"].startswith("processed/")]
+        assert len(processed) == 1
+        assert processed[0]["kind"] == "trace"
+
+    def test_replays_cached_calibration_result(self, process_client, tmp_path):
+        client = process_client
+        dataset_id = self._upload_triplet(client, tmp_path)
+        session_id = client.post("/api/sessions").json()["session_id"]
+
+        opened = client.post("/api/files/open", json={
+            "session_id": session_id,
+            "dataset_id": dataset_id, "relative_path": "230415_003.dat",
+        }).json()
+        cal = client.post("/api/calibrate", json={
+            "session_id": session_id, "file_id": opened["file_id"],
+            "f_min_hz": 100.0, "f_max_hz": 20000.0, "n_alias": 0,
+        }).json()
+
+        r = client.post("/api/process", json={
+            "session_id": session_id,
+            "data": {"dataset_id": dataset_id, "relative_path": "230415_001.dat"},
+            "offset": {"dataset_id": dataset_id, "relative_path": "230415_002.dat"},
+            "calibration_result_id": cal["result_id"],
+            "save_format": "npz",
+        })
+        assert r.status_code == 201
+        assert r.json()["calibration"]["result_id"] == cal["result_id"]
+
+    def test_requires_exactly_one_calibration_source(self, process_client, tmp_path):
+        client = process_client
+        dataset_id = self._upload_triplet(client, tmp_path)
+        session_id = client.post("/api/sessions").json()["session_id"]
+
+        r = client.post("/api/process", json={
+            "session_id": session_id,
+            "data": {"dataset_id": dataset_id, "relative_path": "230415_001.dat"},
+        })
+        assert r.status_code == 422
+
+        r = client.post("/api/process", json={
+            "session_id": session_id,
+            "data": {"dataset_id": dataset_id, "relative_path": "230415_001.dat"},
+            "calibration": {"dataset_id": dataset_id, "relative_path": "230415_003.dat"},
+            "calibration_result_id": "whatever",
+        })
+        assert r.status_code == 422
+
+    def test_missing_data_file_returns_404(self, process_client, tmp_path):
+        client = process_client
+        dataset_id = self._upload_triplet(client, tmp_path)
+        session_id = client.post("/api/sessions").json()["session_id"]
+
+        r = client.post("/api/process", json={
+            "session_id": session_id,
+            "data": {"dataset_id": dataset_id, "relative_path": "does-not-exist.dat"},
+            "calibration": {"dataset_id": dataset_id, "relative_path": "230415_003.dat"},
+        })
+        assert r.status_code == 404

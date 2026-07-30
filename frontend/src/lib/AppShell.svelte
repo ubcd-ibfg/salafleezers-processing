@@ -2,12 +2,13 @@
   import DataRail from './data/DataRail.svelte'
   import Home from './Home.svelte'
   import TraceViewer from './TraceViewer.svelte'
+  import CalibrationViewer from './CalibrationViewer.svelte'
   import ForceExtensionViewer from './ForceExtensionViewer.svelte'
   import { session } from './stores/session.svelte'
   import { theme } from './stores/theme.svelte'
   import { BASE_PATH } from './api'
 
-  let { view = $bindable() }: { view: 'home' | 'trace' | 'force-ext' } = $props()
+  let { view = $bindable() }: { view: 'home' | 'trace' | 'calibrate' | 'force-ext' } = $props()
 
   let saveMsg = $state('')
   let showShortcuts = $state(false)
@@ -33,6 +34,7 @@
   <div class="tabs">
     <button class:active={view === 'home'} onclick={() => (view = 'home')}>Home</button>
     <button class:active={view === 'trace'} onclick={() => (view = 'trace')}>Trace Viewer</button>
+    <button class:active={view === 'calibrate'} onclick={() => (view = 'calibrate')}>Calibration</button>
     <button class:active={view === 'force-ext'} onclick={() => (view = 'force-ext')}>Force-Extension</button>
   </div>
 
@@ -73,7 +75,7 @@
       </div>
       <dl class="stack mono" style="font-size: var(--text-sm); margin-top: var(--s-2);">
         <div class="shortcut-row"><dt>`</dt><dd>home</dd></div>
-        <div class="shortcut-row"><dt>1 / 2</dt><dd>switch view</dd></div>
+        <div class="shortcut-row"><dt>1 / 2 / 3</dt><dd>switch view</dd></div>
         <div class="shortcut-row"><dt>t</dt><dd>toggle theme</dd></div>
         <div class="shortcut-row"><dt>⌘/Ctrl + S</dt><dd>save session</dd></div>
         <div class="shortcut-row"><dt>drag</dt><dd>select a range on the trace plot</dd></div>
@@ -96,6 +98,8 @@
     <main class="canvas">
       {#if view === 'trace'}
         <TraceViewer />
+      {:else if view === 'calibrate'}
+        <CalibrationViewer onNavigate={(v) => (view = v)} />
       {:else}
         <ForceExtensionViewer />
       {/if}

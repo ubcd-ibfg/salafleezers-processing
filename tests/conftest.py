@@ -57,8 +57,12 @@ def make_lorentzian_channel_data(
     rng = np.random.default_rng(seed)
     dt = 1.0 / fs
     gamma_dt = 2 * np.pi * fc * dt
-    # OU process amplitude ~0.1V (≈ 3000 int16 units) for reasonable S/N
-    D = 1e-4
+    # D chosen so the OU process's stationary std is ~3000 int16 units
+    # (std = sqrt(D/(2*pi*fc)) * 3276.7). Anything much smaller and the
+    # signal is swamped by int16 quantization noise -- calibrate() then
+    # fits the quantization floor instead of the true corner frequency,
+    # recovering a wildly wrong fc despite converging "successfully".
+    D = 5625.0
     noise = rng.normal(0, np.sqrt(2 * D * dt), n_samples)
     x = np.zeros(n_samples)
     for i in range(1, n_samples):

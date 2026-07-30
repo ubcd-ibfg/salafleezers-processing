@@ -3,7 +3,7 @@
   import { session } from './stores/session.svelte'
   import { BASE_PATH } from './api'
 
-  let { onNavigate }: { onNavigate: (view: 'trace' | 'force-ext') => void } = $props()
+  let { onNavigate }: { onNavigate: (view: 'trace' | 'calibrate' | 'force-ext') => void } = $props()
 
   // Rough at-a-glance counters for the "session" strip. Traces are the
   // openable entries across every uploaded dataset.
@@ -28,6 +28,7 @@
 
       <div class="cta row-center">
         <button class="primary" onclick={() => onNavigate('trace')}>Open Trace Viewer</button>
+        <button onclick={() => onNavigate('calibrate')}>Calibrate</button>
         <button onclick={() => onNavigate('force-ext')}>Force-Extension</button>
       </div>
 
@@ -66,7 +67,7 @@
         Fit Lorentzian power spectra to recover trap stiffness and detector sensitivity, then
         convert detector volts into calibrated force and extension.
       </p>
-      <span class="dim feature-link mono">via power-spectrum fit</span>
+      <button class="ghost feature-link" onclick={() => onNavigate('calibrate')}>Open &rarr;</button>
     </article>
 
     <article class="card feature stack">
@@ -82,7 +83,7 @@
 
   <footer class="home-footer">
     <span class="dim">Headless? Run <span class="mono">sfz gui</span> or the <span class="mono">sfz</span> CLI.</span>
-    <span class="dim">Press <span class="mono">1</span> / <span class="mono">2</span> to switch views, <span class="mono">t</span> to toggle theme.</span>
+    <span class="dim">Press <span class="mono">1</span> / <span class="mono">2</span> / <span class="mono">3</span> to switch views, <span class="mono">t</span> to toggle theme.</span>
   </footer>
 </main>
 

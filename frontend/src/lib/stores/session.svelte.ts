@@ -64,6 +64,16 @@ class SessionStore {
   }
 
   /**
+   * Mirror a preview the server already opened into this session (e.g. the
+   * force/extension trace `POST /api/process` produces and opens as a side
+   * effect) into the client-side file list, without a redundant
+   * `POST /api/files/open` round-trip.
+   */
+  registerOpenedFile(preview: TracePreview) {
+    this.addFile(preview)
+  }
+
+  /**
    * Open a file either by an uploaded-dataset reference or (legacy,
    * server-path) reference. The UI only ever constructs the dataset form —
    * `{path}` exists for completeness/testing, not as a user-facing input.

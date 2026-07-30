@@ -10,6 +10,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from salafleezers.constants import (
+    BEAD_RADIUS_NM,
+    CAL_FMIN_HZ,
+    CAL_N_ALIAS,
+    CAL_NBIN,
+    CONV_TRAP_X_NM_PER_MHZ,
+    KT_24C,
+    WATER_VISC_24C,
+)
+
 
 # ---------------------------------------------------------------------------
 # Sessions
@@ -346,6 +356,7 @@ class UploadEntryOut(BaseModel):
     sidecars: list[str] = Field(default_factory=list)
     missing_sidecars: list[str] = Field(default_factory=list)
     warning: str | None = None
+    datatype: int | None = None     # .dat header field 5: 1 = calibration file
 
 
 class DatasetOut(BaseModel):
@@ -360,3 +371,93 @@ class DatasetOut(BaseModel):
 class UploadedFileOut(BaseModel):
     relative_path: str
     size_bytes: int
+
+
+# ---------------------------------------------------------------------------
+# Calibration & processing (Lorentzian power-spectrum fit -> force/extension)
+# ---------------------------------------------------------------------------
+
+class CalibrationRequest(BaseModel):
+    session_id: str
+    file_id: str                     # a calibration .dat already opened in the session
+    bead_radius_a_nm: float = Field(default=BEAD_RADIUS_NM, gt=0, le=100_000)
+    bead_radius_b_nm: float = Field(default=BEAD_RADIUS_NM, gt=0, le=100_000)
+    f_min_hz: float = Field(default=CAL_FMIN_HZ, ge=0)
+    f_max_hz: float | None = Field(default=None, gt=0)      # None -> Nyquist
+    n_bin: int = Field(default=CAL_NBIN, ge=1, le=1_000_000)
+    n_alias: int = Field(default=CAL_N_ALIAS, ge=0, le=100)  # bounds the (2n+1, len(f)) alloc
+    normalize: bool = True
+    kt_pn_nm: float = Field(default=KT_24C, gt=0)
+    water_viscosity: float = Field(default=WATER_VISC_24C, gt=0)
+
+
+class CalibrationAxisResult(BaseModel):
+    detector: str                    # "AX" | "BX" | "AY" | "BY"
+    fc_hz: float
+    alpha_nm_v: float
+    kappa_pn_nm: float
+    D_v2_hz: float
+    drag_pn_s_nm: float
+    D_theory_nm2_s: float
+    chi2: float
+    converged: bool
+    f_binned: list[float]            # full binned PSD -- for plotting
+    psd_binned: list[float]
+    f_model: list[float]             # fitted Lorentzian, evaluated over the fit range
+    psd_model: list[float]
+    f_fit_min: float                 # so the plot can shade the fit window
+    f_fit_max: float
+
+
+class CalibrationResultOut(BaseModel):
+    session_id: str
+    file_id: str
+    result_id: str
+    sampling_rate_hz: float
+    axes: list[CalibrationAxisResult]
+    skipped: list[str]               # detectors absent from this file
+
+
+class DatasetFileRef(BaseModel):
+    dataset_id: str
+    relative_path: str
+
+
+class ProcessRunRequest(BaseModel):
+    session_id: str
+    data: DatasetFileRef
+    offset: DatasetFileRef | None = None            # None -> zero offset
+    calibration: DatasetFileRef | None = None        # fit fresh from this .dat ...
+    calibration_result_id: str | None = None         # ... or replay a cached fit
+    bead_radius_a_nm: float = Field(default=BEAD_RADIUS_NM, gt=0, le=100_000)
+    bead_radius_b_nm: float = Field(default=BEAD_RADIUS_NM, gt=0, le=100_000)
+    ext_offset_nm: float = 0.0
+    conv_trap_x_nm_per_mhz: float = Field(default=CONV_TRAP_X_NM_PER_MHZ, gt=0)
+    normalize: bool = True
+    # Calibration-fit knobs, honoured only when `calibration` is given.
+    f_min_hz: float = Field(default=CAL_FMIN_HZ, ge=0)
+    f_max_hz: float | None = Field(default=None, gt=0)
+    n_bin: int = Field(default=CAL_NBIN, ge=1, le=1_000_000)
+    n_alias: int = Field(default=CAL_N_ALIAS, ge=0, le=100)
+    save_format: str = "hdf5"                        # "hdf5" | "npz"
+    output_name: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_calibration(self) -> "ProcessRunRequest":
+        has_dat = self.calibration is not None
+        has_cached = self.calibration_result_id is not None
+        if has_dat == has_cached:
+            raise ValueError(
+                "Provide exactly one of 'calibration' (a .dat to fit) or "
+                "'calibration_result_id' (a previously computed fit)"
+            )
+        return self
+
+
+class ProcessRunResult(BaseModel):
+    session_id: str
+    dataset_id: str
+    relative_path: str
+    preview: TracePreview            # already opened into the session
+    calibration: CalibrationResultOut
+    warnings: list[str]              # e.g. missing _pos -> extension unreliable

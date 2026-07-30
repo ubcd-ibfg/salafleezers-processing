@@ -271,6 +271,7 @@ export interface UploadEntry {
   sidecars: string[]
   missing_sidecars: string[]
   warning: string | null
+  datatype: number | null // .dat header field 5: 1 = calibration file
 }
 
 export interface Dataset {
@@ -285,4 +286,84 @@ export interface Dataset {
 export interface UploadedFileInfo {
   relative_path: string
   size_bytes: number
+}
+
+// ---------------------------------------------------------------------------
+// Calibration & processing (Lorentzian power-spectrum fit -> force/extension)
+// ---------------------------------------------------------------------------
+
+export interface CalibrationRequest {
+  session_id: string
+  file_id: string
+  bead_radius_a_nm?: number
+  bead_radius_b_nm?: number
+  f_min_hz?: number
+  f_max_hz?: number | null
+  n_bin?: number
+  n_alias?: number
+  normalize?: boolean
+  kt_pn_nm?: number
+  water_viscosity?: number
+}
+
+export type CalibrationDetector = 'AX' | 'BX' | 'AY' | 'BY'
+
+export interface CalibrationAxisResult {
+  detector: CalibrationDetector
+  fc_hz: number
+  alpha_nm_v: number
+  kappa_pn_nm: number
+  D_v2_hz: number
+  drag_pn_s_nm: number
+  D_theory_nm2_s: number
+  chi2: number
+  converged: boolean
+  f_binned: number[]
+  psd_binned: number[]
+  f_model: number[]
+  psd_model: number[]
+  f_fit_min: number
+  f_fit_max: number
+}
+
+export interface CalibrationResultOut {
+  session_id: string
+  file_id: string
+  result_id: string
+  sampling_rate_hz: number
+  axes: CalibrationAxisResult[]
+  skipped: string[]
+}
+
+export interface DatasetFileRef {
+  dataset_id: string
+  relative_path: string
+}
+
+export interface ProcessRunRequest {
+  session_id: string
+  data: DatasetFileRef
+  offset?: DatasetFileRef | null
+  calibration?: DatasetFileRef | null
+  calibration_result_id?: string | null
+  bead_radius_a_nm?: number
+  bead_radius_b_nm?: number
+  ext_offset_nm?: number
+  conv_trap_x_nm_per_mhz?: number
+  normalize?: boolean
+  f_min_hz?: number
+  f_max_hz?: number | null
+  n_bin?: number
+  n_alias?: number
+  save_format?: 'hdf5' | 'npz'
+  output_name?: string | null
+}
+
+export interface ProcessRunResult {
+  session_id: string
+  dataset_id: string
+  relative_path: string
+  preview: TracePreview
+  calibration: CalibrationResultOut
+  warnings: string[]
 }

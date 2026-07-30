@@ -31,6 +31,9 @@ from salafleezers.calibration.power_spectrum import (
 )
 from salafleezers.constants import (
     BEAD_RADIUS_NM,
+    CAL_FMIN_HZ,
+    CAL_N_ALIAS,
+    CAL_NBIN,
     KT_24C,
     WATER_VISC_24C,
 )
@@ -51,6 +54,8 @@ class CalibrationResult:
     F_full: np.ndarray    # full binned frequency axis (for plotting)
     P_full: np.ndarray    # full binned PSD (for plotting)
     name: str = ""        # detector name, e.g. "AX"
+    chi2: float = 0.0      # sum of squared log-space residuals at the optimum
+    converged: bool = True  # scipy.optimize.least_squares' reported success flag
 
 
 def lorentz_guess(
@@ -101,7 +106,8 @@ def fit_lorentzian(
     fs: float,
     n_alias: int = 20,
     model_fn: Callable | None = None,
-) -> np.ndarray:
+    full_output: bool = False,
+):
     """Nonlinear log-space least-squares fit to a Lorentzian model.
 
     Minimises ``log(model(x, f)) - log(P)`` — identical to the MATLAB:
@@ -121,11 +127,15 @@ def fit_lorentzian(
     model_fn : callable or None
         Model function ``f(params, F, fs, n_alias) -> PSD``.
         Defaults to :func:`lorentzian_pure`.
+    full_output : bool
+        If True, also return the raw :class:`scipy.optimize.OptimizeResult`.
 
     Returns
     -------
     params : np.ndarray, shape (2,)
         Best-fit ``[fc, D]``.
+    result : scipy.optimize.OptimizeResult
+        Only returned when ``full_output`` is True.
     """
     if model_fn is None:
         model_fn = lorentzian_pure
@@ -151,6 +161,8 @@ def fit_lorentzian(
         gtol=1e-10,
         max_nfev=5000,
     )
+    if full_output:
+        return result.x, result
     return result.x
 
 
@@ -161,10 +173,10 @@ def calibrate(
     ra: float = BEAD_RADIUS_NM,
     kt: float = KT_24C,
     wv: float = WATER_VISC_24C,
-    f_min: float = 100.0,
+    f_min: float = CAL_FMIN_HZ,
     f_max: float | None = None,
-    n_bin: int = 1563,
-    n_alias: int = 20,
+    n_bin: int = CAL_NBIN,
+    n_alias: int = CAL_N_ALIAS,
     name: str = "",
 ) -> CalibrationResult:
     """Full single-detector Lorentzian calibration pipeline.
@@ -205,13 +217,23 @@ def calibrate(
 
     # 3. Select fit range
     Fbf, Pbf = select_fit_range(Fb, Pb, f_min, f_max)
+    if len(Fbf) == 0:
+        raise ValueError(
+            f"No spectrum points fall in the fit range ({f_min:.1f}, {f_max:.1f}) Hz "
+            f"-- the binned spectrum spans ({Fb[0]:.1f}, {Fb[-1]:.1f}) Hz. "
+            "Widen f_min/f_max or lower n_bin."
+        )
 
     # 4. Initial guess
     fc_guess, D_guess = lorentz_guess(Fbf, Pbf)
 
     # 5. Optimise
-    fit_params = fit_lorentzian(Fbf, Pbf, fc_guess, D_guess, fs, n_alias)
+    fit_params, opt_result = fit_lorentzian(
+        Fbf, Pbf, fc_guess, D_guess, fs, n_alias, full_output=True
+    )
     fc, D_fit = fit_params
+    chi2 = float(np.sum(opt_result.fun ** 2))
+    converged = bool(opt_result.success)
 
     # 6. Physical conversion
     # Stokes drag: γ = 6π·η·r
@@ -238,4 +260,6 @@ def calibrate(
         F_full=Fb,
         P_full=Pb,
         name=name,
+        chi2=chi2,
+        converged=converged,
     )

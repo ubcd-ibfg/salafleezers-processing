@@ -305,6 +305,7 @@ class Session:
     pwd_results: dict[str, Any] = field(default_factory=dict)
     kinetics_results: dict[str, Any] = field(default_factory=dict)
     kde_results: dict[str, Any] = field(default_factory=dict)
+    calibration_results: dict[str, Any] = field(default_factory=dict)
 
     # -- files ------------------------------------------------------------
 
@@ -386,6 +387,7 @@ class Session:
             "pwd_results": self.pwd_results,
             "kinetics_results": self.kinetics_results,
             "kde_results": self.kde_results,
+            "calibration_results": self.calibration_results,
         }
 
     @classmethod
@@ -417,6 +419,7 @@ class Session:
             pwd_results=data.get("pwd_results", {}),
             kinetics_results=data.get("kinetics_results", {}),
             kde_results=data.get("kde_results", {}),
+            calibration_results=data.get("calibration_results", {}),
         )
 
 

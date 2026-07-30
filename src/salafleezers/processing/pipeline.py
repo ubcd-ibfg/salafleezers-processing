@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 
@@ -67,6 +68,31 @@ class ProcessingOptions:
 # ---------------------------------------------------------------------------
 
 _DET_AXES = [("AX", "AS"), ("BX", "BS"), ("AY", "AS"), ("BY", "BS")]
+
+
+@dataclass(frozen=True)
+class AxisCalibration:
+    """The calibration numbers the force/extension math and ``to_dict`` need.
+
+    A deliberately lighter counterpart to :class:`CalibrationResult` — no
+    spectrum arrays — so a caller replaying a calibration fit that only has
+    the JSON-serialized scalar fields (e.g. from a cached web session result)
+    doesn't have to fabricate dummy arrays to satisfy a full
+    ``CalibrationResult``. ``fc`` is carried through only so saved output
+    keeps the ``cal_{axis}_fc`` field documented in ``data-formats.md``.
+    """
+    alpha: float   # nm/V
+    kappa: float   # pN/nm
+    fc: float = 0.0  # Hz
+
+
+def _to_axis_calibrations(
+    cal: dict[str, CalibrationResult],
+) -> dict[str, AxisCalibration]:
+    return {
+        name: AxisCalibration(alpha=c.alpha, kappa=c.kappa, fc=c.fc)
+        for name, c in cal.items()
+    }
 
 
 def _calibrate_file(
@@ -190,7 +216,7 @@ class ProcessedData:
     force_bx: np.ndarray      # pN (trap B, X axis)
     force_ay: np.ndarray      # pN (trap A, Y axis)
     force_by: np.ndarray      # pN (trap B, Y axis)
-    cal: dict[str, CalibrationResult]
+    cal: dict[str, AxisCalibration]
     meta: dict
     opts: ProcessingOptions
     # Optional fluorescence
@@ -224,6 +250,130 @@ class ProcessedData:
 # ---------------------------------------------------------------------------
 # Core single-file processor
 # ---------------------------------------------------------------------------
+
+def process_from_dats(
+    raw_dat: DatFile,
+    raw_off: DatFile | None,
+    cal: Mapping[str, AxisCalibration],
+    opts: ProcessingOptions,
+) -> ProcessedData:
+    """Turn a data / offset / calibration triplet already in memory into force+extension.
+
+    This is the filename-free core of :func:`process_one`: everything about
+    resolving numbered ``.dat`` filenames on disk lives in the caller, so any
+    source of ``DatFile``s (a batch directory, or files uploaded through the
+    web GUI with arbitrary names) can drive the same physics.
+
+    Parameters
+    ----------
+    raw_dat : DatFile
+        The data file to process (read with ``skip_fl=True`` unless
+        fluorescence channels are wanted in the output).
+    raw_off : DatFile or None
+        The offset file (bead-interaction baseline). ``None`` means "no
+        offset available" -- a constant zero offset is subtracted instead of
+        raising, since force is still meaningful without one.
+    cal : mapping of detector name -> AxisCalibration
+        Per-axis ``alpha``/``kappa`` (and optionally ``fc``), e.g. from
+        :func:`_calibrate_file` via :func:`_to_axis_calibrations`, or
+        replayed from a previously computed fit.
+    opts : ProcessingOptions
+
+    Returns
+    -------
+    ProcessedData
+    """
+    # 1. Offset
+    if raw_off is not None:
+        off = _prepare_offset(raw_off)
+    else:
+        off = DatFile(meta={}, channels={"TX": np.array([0.0, 1e9])}, time=np.array([0.0, 1e9]))
+
+    # Compute trap-delta TX for data file
+    if raw_dat.t1f is not None and raw_dat.t2f is not None:
+        dat_tx = ((raw_dat.t2f - raw_dat.t1f) * CONV_TRAP_X_NM_PER_MHZ).astype(np.float64)
+    else:
+        dat_tx = np.zeros(len(raw_dat.time), dtype=np.float64)
+
+    off_tx = off.channels["TX"].astype(np.float64)
+
+    # TY: timeshared instruments fix TY = 0
+    dat_ty = np.zeros_like(dat_tx)
+
+    # 2. Normalise + offset-subtract each detector; compute forces
+    def _process_det(det: str, sum_ch: str) -> tuple[np.ndarray, np.ndarray]:
+        """Return (corrected_signal_V, force_pN)."""
+        if det not in raw_dat.channels or sum_ch not in raw_dat.channels:
+            zeros = np.zeros(len(raw_dat.time), dtype=np.float64)
+            return zeros, zeros
+        if opts.normalize:
+            sig = apply_offset(
+                data_signal=raw_dat.channels[det].astype(np.float64),
+                data_sum=raw_dat.channels[sum_ch].astype(np.float64),
+                data_td=dat_tx,
+                off_signal=off.channels[det].astype(np.float64) if det in off.channels else np.zeros(2),
+                off_sum=off.channels[sum_ch].astype(np.float64) if sum_ch in off.channels else np.ones(2),
+                off_td=off_tx,
+            )
+        else:
+            norm_off = off.channels[det].astype(np.float64) if det in off.channels else np.zeros(2)
+            off_sum = off.channels[sum_ch].astype(np.float64) if sum_ch in off.channels else np.ones(2)
+            from scipy.interpolate import interp1d
+            med = float(np.nanmedian(norm_off / off_sum))
+            interp = interp1d(off_tx, norm_off, kind="linear",
+                              bounds_error=False, fill_value=med)
+            sig = raw_dat.channels[det].astype(np.float64) - interp(dat_tx)
+
+        c = cal.get(det)
+        force = sig * (c.alpha * c.kappa) if c is not None else np.zeros_like(sig)
+        return sig, force.astype(np.float64)
+
+    sig_ax, force_ax = _process_det("AX", "AS")
+    sig_bx, force_bx = _process_det("BX", "BS")
+    sig_ay, force_ay = _process_det("AY", "AS")
+    sig_by, force_by = _process_det("BY", "BS")
+
+    # 3. Extension: hypot(TX + α_AX·AX - α_BX·BX, TY + α_AY·AY - α_BY·BY) - r_A - r_B - offset
+    a_ax = cal["AX"].alpha if "AX" in cal else 0.0
+    a_bx = cal["BX"].alpha if "BX" in cal else 0.0
+    a_ay = cal["AY"].alpha if "AY" in cal else 0.0
+    a_by = cal["BY"].alpha if "BY" in cal else 0.0
+
+    extension = (
+        np.hypot(
+            dat_tx + a_ax * sig_ax - a_bx * sig_bx,
+            dat_ty + a_ay * sig_ay - a_by * sig_by,
+        )
+        - opts.ra_a - opts.ra_b - opts.ext_offset
+    )
+
+    # 4. Total differential force
+    force = np.hypot(
+        (force_bx - force_ax) / 2,
+        (force_by - force_ay) / 2,
+    )
+
+    # 5. Time axis from data file sampling frequency
+    fs = float(raw_dat.meta["Fs"])
+    n = len(extension)
+    time_axis = np.arange(n, dtype=np.float32) / fs
+
+    return ProcessedData(
+        time=time_axis,
+        force=force.astype(np.float32),
+        extension=extension.astype(np.float32),
+        force_ax=force_ax.astype(np.float32),
+        force_bx=force_bx.astype(np.float32),
+        force_ay=force_ay.astype(np.float32),
+        force_by=force_by.astype(np.float32),
+        cal=dict(cal),
+        meta=raw_dat.meta,
+        opts=opts,
+        apd1=raw_dat.apd1,
+        apd2=raw_dat.apd2,
+        apd_time=raw_dat.apd_time,
+    )
+
 
 def process_one(
     path: str | Path,
@@ -270,102 +420,22 @@ def process_one(
     if opts.verbose:
         for k, v in cal.items():
             print(f"  cal {k}: fc={v.fc:.1f} Hz  alpha={v.alpha:.1f} nm/V  kappa={v.kappa:.4f} pN/nm")
+    del cal_dat
 
     # 2. Offset
     raw_off = read_dat(fn(off_num), skip_fl=True)
-    off = _prepare_offset(raw_off)
 
     # 3. Data
     raw_dat = read_dat(fn(dat_num))
 
-    # Compute trap-delta TX for data file
-    if raw_dat.t1f is not None and raw_dat.t2f is not None:
-        dat_tx = ((raw_dat.t2f - raw_dat.t1f) * CONV_TRAP_X_NM_PER_MHZ).astype(np.float64)
-    else:
-        dat_tx = np.zeros(len(raw_dat.time), dtype=np.float64)
-
-    off_tx = off.channels["TX"].astype(np.float64)
-
-    # TY: timeshared instruments fix TY = 0
-    dat_ty = np.zeros_like(dat_tx)
-
-    # 4. Normalise + offset-subtract each detector; compute forces
-    def _process_det(det: str, sum_ch: str) -> tuple[np.ndarray, np.ndarray]:
-        """Return (corrected_signal_V, force_pN)."""
-        if det not in raw_dat.channels or sum_ch not in raw_dat.channels:
-            zeros = np.zeros(len(raw_dat.time), dtype=np.float64)
-            return zeros, zeros
-        if opts.normalize:
-            sig = apply_offset(
-                data_signal=raw_dat.channels[det].astype(np.float64),
-                data_sum=raw_dat.channels[sum_ch].astype(np.float64),
-                data_td=dat_tx,
-                off_signal=off.channels[det].astype(np.float64) if det in off.channels else np.zeros(2),
-                off_sum=off.channels[sum_ch].astype(np.float64) if sum_ch in off.channels else np.ones(2),
-                off_td=off_tx,
-            )
-        else:
-            norm_off = off.channels[det].astype(np.float64) if det in off.channels else np.zeros(2)
-            off_sum = off.channels[sum_ch].astype(np.float64) if sum_ch in off.channels else np.ones(2)
-            from scipy.interpolate import interp1d
-            med = float(np.nanmedian(norm_off / off_sum))
-            interp = interp1d(off_tx, norm_off, kind="linear",
-                              bounds_error=False, fill_value=med)
-            sig = raw_dat.channels[det].astype(np.float64) - interp(dat_tx)
-
-        c = cal.get(det)
-        force = sig * (c.alpha * c.kappa) if c is not None else np.zeros_like(sig)
-        return sig, force.astype(np.float64)
-
-    sig_ax, force_ax = _process_det("AX", "AS")
-    sig_bx, force_bx = _process_det("BX", "BS")
-    sig_ay, force_ay = _process_det("AY", "AS")
-    sig_by, force_by = _process_det("BY", "BS")
-
-    # 5. Extension: hypot(TX + α_AX·AX - α_BX·BX, TY + α_AY·AY - α_BY·BY) - r_A - r_B - offset
-    a_ax = cal["AX"].alpha if "AX" in cal else 0.0
-    a_bx = cal["BX"].alpha if "BX" in cal else 0.0
-    a_ay = cal["AY"].alpha if "AY" in cal else 0.0
-    a_by = cal["BY"].alpha if "BY" in cal else 0.0
-
-    extension = (
-        np.hypot(
-            dat_tx + a_ax * sig_ax - a_bx * sig_bx,
-            dat_ty + a_ay * sig_ay - a_by * sig_by,
-        )
-        - opts.ra_a - opts.ra_b - opts.ext_offset
-    )
-
-    # 6. Total differential force
-    force = np.hypot(
-        (force_bx - force_ax) / 2,
-        (force_by - force_ay) / 2,
-    )
-
-    # 7. Time axis from data file sampling frequency
-    fs = float(raw_dat.meta["Fs"])
-    n = len(extension)
-    time_axis = np.arange(n, dtype=np.float32) / fs
+    result = process_from_dats(raw_dat, raw_off, _to_axis_calibrations(cal), opts)
+    del raw_off
 
     if opts.verbose:
         elapsed = time.perf_counter() - t0
-        print(f"  Done in {elapsed:.2f}s  |  n={n} pts  |  Fs={fs:.0f} Hz")
+        print(f"  Done in {elapsed:.2f}s  |  n={len(result.time)} pts")
 
-    return ProcessedData(
-        time=time_axis,
-        force=force.astype(np.float32),
-        extension=extension.astype(np.float32),
-        force_ax=force_ax.astype(np.float32),
-        force_bx=force_bx.astype(np.float32),
-        force_ay=force_ay.astype(np.float32),
-        force_by=force_by.astype(np.float32),
-        cal=cal,
-        meta=raw_dat.meta,
-        opts=opts,
-        apd1=raw_dat.apd1,
-        apd2=raw_dat.apd2,
-        apd_time=raw_dat.apd_time,
-    )
+    return result
 
 
 # ---------------------------------------------------------------------------

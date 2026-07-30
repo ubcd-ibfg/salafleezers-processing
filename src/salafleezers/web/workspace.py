@@ -95,6 +95,7 @@ class UploadEntry:
     sidecars: list[str] = field(default_factory=list)          # trace: attached sidecars
     missing_sidecars: list[str] = field(default_factory=list)  # trace: expected but absent
     warning: str | None = None
+    datatype: int | None = None                # .dat header field 5: 1 = calibration file
 
 
 @dataclass
@@ -295,6 +296,9 @@ class WorkspaceStore:
             meta, _cmt, _offset = read_header(path)
         except Exception:
             return   # unreadable/corrupt header -- opening the file will surface this
+
+        raw_datatype = meta.get("datatype")
+        entry.datatype = int(raw_datatype) if raw_datatype is not None else None
 
         extra = meta.get("extraData", 0)
         expected = []

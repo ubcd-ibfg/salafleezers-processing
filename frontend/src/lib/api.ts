@@ -1,5 +1,7 @@
 import { auth } from './stores/auth.svelte'
 import type {
+  CalibrationRequest,
+  CalibrationResultOut,
   Dataset,
   FileOpenRequest,
   HealthInfo,
@@ -9,6 +11,8 @@ import type {
   KineticsResult,
   MSDRequest,
   MSDResult,
+  ProcessRunRequest,
+  ProcessRunResult,
   PWDRequest,
   PWDResult,
   SessionInfo,
@@ -191,4 +195,18 @@ export const api = {
     request<ViolinResult>('/api/violin', { method: 'POST', body: JSON.stringify(body), ...opts }),
   msd: (body: MSDRequest, opts?: Opts) =>
     request<MSDResult>('/api/msd', { method: 'POST', body: JSON.stringify(body), ...opts }),
+
+  // Calibration & processing
+  calibrate: (body: CalibrationRequest, opts?: Opts) =>
+    request<CalibrationResultOut>('/api/calibrate', { method: 'POST', body: JSON.stringify(body), ...opts }),
+  process: (body: ProcessRunRequest, opts?: Opts) =>
+    // A real data/offset/calibration triplet is much larger than any other
+    // analysis input (raw .dat, not a decimated preview) -- give it more
+    // room than the 60s default before the client gives up waiting.
+    request<ProcessRunResult>('/api/process', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      timeoutMs: 600_000,
+      ...opts,
+    }),
 }

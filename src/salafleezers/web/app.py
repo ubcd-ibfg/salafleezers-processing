@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse
 
-from salafleezers.web.api import analysis, files, sessions, traces, uploads
+from salafleezers.web.api import analysis, calibration, files, sessions, traces, uploads
 from salafleezers.web.auth import (
     ANONYMOUS_USER_ID,
     Principal,
@@ -224,6 +224,7 @@ def create_app(
     app.include_router(uploads.router)
     app.include_router(traces.router)
     app.include_router(analysis.router)
+    app.include_router(calibration.router)
 
     @app.post("/api/ws-ticket", tags=["meta"])
     async def ws_ticket(

@@ -129,3 +129,66 @@ class TestPipelineSmoke:
                              ProcessingOptions(verbose=False,
                                               f_min=100.0, f_max=20000.0))
         np.testing.assert_allclose(result.force, 0.0, atol=1e-6)
+
+    def test_process_from_dats_matches_process_one(self, tmp_path):
+        """process_from_dats (the filename-free core) must reproduce process_one exactly.
+
+        process_one is a thin filename-resolving adapter around
+        process_from_dats -- this pins the refactor so a web caller driving
+        process_from_dats directly from uploaded files gets identical numbers.
+        """
+        from tests.conftest import make_dat_file, make_lorentzian_channel_data
+        from salafleezers.io.reader import read_dat
+        from salafleezers.processing.pipeline import (
+            ProcessingOptions, process_one, process_from_dats,
+            _calibrate_file, _to_axis_calibrations,
+        )
+
+        n_samples = 65536
+        n_ch = 13
+        fs = 62500.0
+        lor_data = make_lorentzian_channel_data(n_ch, n_samples, fs=fs)
+        make_dat_file(tmp_path / "230415_003.dat", n_samples=n_samples,
+                      n_channels=n_ch, channel_data=lor_data, fs=fs)
+        for num in (1, 2):
+            make_dat_file(tmp_path / f"230415_{num:03d}.dat",
+                          n_samples=n_samples, n_channels=n_ch, fs=fs)
+
+        opts = ProcessingOptions(verbose=False, f_min=100.0, f_max=20000.0)
+        via_adapter = process_one(tmp_path, (1, 2, 3), "230415", opts)
+
+        cal_dat = read_dat(tmp_path / "230415_003.dat", skip_fl=True)
+        cal = _calibrate_file(cal_dat, opts)
+        raw_off = read_dat(tmp_path / "230415_002.dat", skip_fl=True)
+        raw_dat = read_dat(tmp_path / "230415_001.dat")
+        via_core = process_from_dats(raw_dat, raw_off, _to_axis_calibrations(cal), opts)
+
+        np.testing.assert_array_equal(via_adapter.time, via_core.time)
+        np.testing.assert_array_equal(via_adapter.force, via_core.force)
+        np.testing.assert_array_equal(via_adapter.extension, via_core.extension)
+
+    def test_process_from_dats_without_offset(self, tmp_path):
+        """raw_off=None subtracts a constant zero offset instead of raising."""
+        from tests.conftest import make_dat_file, make_lorentzian_channel_data
+        from salafleezers.io.reader import read_dat
+        from salafleezers.processing.pipeline import (
+            ProcessingOptions, process_from_dats, _calibrate_file, _to_axis_calibrations,
+        )
+
+        n_samples = 65536
+        n_ch = 13
+        fs = 62500.0
+        lor_data = make_lorentzian_channel_data(n_ch, n_samples, fs=fs)
+        make_dat_file(tmp_path / "230415_003.dat", n_samples=n_samples,
+                      n_channels=n_ch, channel_data=lor_data, fs=fs)
+        make_dat_file(tmp_path / "230415_001.dat", n_samples=n_samples,
+                      n_channels=n_ch, fs=fs)
+
+        opts = ProcessingOptions(verbose=False, f_min=100.0, f_max=20000.0)
+        cal_dat = read_dat(tmp_path / "230415_003.dat", skip_fl=True)
+        cal = _calibrate_file(cal_dat, opts)
+        raw_dat = read_dat(tmp_path / "230415_001.dat")
+
+        result = process_from_dats(raw_dat, None, _to_axis_calibrations(cal), opts)
+        assert np.all(np.isfinite(result.force))
+        assert np.all(np.isfinite(result.extension))

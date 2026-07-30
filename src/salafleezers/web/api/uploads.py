@@ -56,6 +56,7 @@ def _to_dataset_out(ds: Dataset) -> DatasetOut:
                 sidecars=e.sidecars,
                 missing_sidecars=e.missing_sidecars,
                 warning=e.warning,
+                datatype=e.datatype,
             )
             for e in ds.entries
         ],
