@@ -5,6 +5,7 @@
   import ForceExtensionViewer from './ForceExtensionViewer.svelte'
   import { session } from './stores/session.svelte'
   import { theme } from './stores/theme.svelte'
+  import { BASE_PATH } from './api'
 
   let { view = $bindable() }: { view: 'home' | 'trace' | 'force-ext' } = $props()
 
@@ -25,7 +26,7 @@
 
 <header class="topbar">
   <button class="brand" onclick={() => (view = 'home')} title="Home (`)">
-    <img src="/logo.png" alt="SalaFleezer logo" class="brand-logo" />
+    <img src="{BASE_PATH}/logo.png" alt="SalaFleezer logo" class="brand-logo" />
     SalaFleezer
   </button>
 

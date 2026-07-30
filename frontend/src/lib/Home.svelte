@@ -1,6 +1,7 @@
 <script lang="ts">
   import { datasets } from './data/datasets.svelte'
   import { session } from './stores/session.svelte'
+  import { BASE_PATH } from './api'
 
   let { onNavigate }: { onNavigate: (view: 'trace' | 'force-ext') => void } = $props()
 
@@ -14,7 +15,7 @@
 
 <main class="home">
   <section class="hero">
-    <img src="/logo-hero.png" alt="SalaFleezers logo" class="hero-logo" />
+    <img src="{BASE_PATH}/logo-hero.png" alt="SalaFleezers logo" class="hero-logo" />
     <div class="hero-copy stack">
       <p class="label">Optical-tweezers force spectroscopy</p>
       <h1 class="hero-title">SalaFleezer</h1>
