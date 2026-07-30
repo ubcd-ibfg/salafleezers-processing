@@ -96,6 +96,45 @@ def test_wildcard_origin_with_credentials_rejected_at_startup():
         create_app(allow_origins=["*"], serve_spa=False)
 
 
+def test_no_base_path_by_default():
+    """Unset FRONTEND_BASE_PATH must not change routes at all (back-compat)."""
+    app = create_app(serve_spa=False)
+    client = TestClient(app)
+    assert client.get("/api/health").status_code == 200
+
+
+def test_base_path_mounts_api_under_prefix(monkeypatch):
+    monkeypatch.setenv("FRONTEND_BASE_PATH", "/salafleezer")
+    client = TestClient(create_app(serve_spa=False))
+
+    r = client.get("/salafleezer/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+    # Not reachable at the un-prefixed path once a base path is configured.
+    assert client.get("/api/health").status_code == 404
+
+
+def test_base_path_redirects_root_to_itself(monkeypatch):
+    monkeypatch.setenv("FRONTEND_BASE_PATH", "/salafleezer")
+    client = TestClient(create_app(serve_spa=False), follow_redirects=False)
+
+    r = client.get("/")
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == "/salafleezer/"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("", ""), ("/", ""), ("salafleezer", "/salafleezer"), ("/salafleezer/", "/salafleezer")],
+)
+def test_resolve_frontend_base_path_normalizes(monkeypatch, raw, expected):
+    from salafleezers.web.app import resolve_frontend_base_path
+
+    monkeypatch.setenv("FRONTEND_BASE_PATH", raw)
+    assert resolve_frontend_base_path() == expected
+
+
 def test_oversized_request_body_rejected(monkeypatch):
     monkeypatch.setenv("SFZ_MAX_BODY_BYTES", "100")
     small_limit_client = TestClient(create_app(serve_spa=False))

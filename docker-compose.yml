@@ -1,6 +1,13 @@
 services:
   sfz-gui:
-    build: .
+    build:
+      context: .
+      args:
+        # Also needed at build time (not just below, at runtime) -- it's
+        # baked into the compiled frontend JS via Vite's `base` config. Both
+        # must be set to the same value, which is why they read from the
+        # same FRONTEND_BASE_PATH in .env.
+        FRONTEND_BASE_PATH: ${FRONTEND_BASE_PATH:-/}
     ports:
       - "${SFZ_PORT:-8765}:8765"
     volumes:
@@ -10,6 +17,21 @@ services:
       # the optional legacy "open by server path" flow.
       - sfz-sessions:/root/.salafleezers
     environment:
+      # Base path the GUI is reachable under, e.g. "/salafleezer" to serve at
+      # http://localhost:${SFZ_PORT}/salafleezer/ instead of the root -- for
+      # a reverse proxy that forwards the path through unstripped. Leave
+      # unset for the default root deployment. See web/app.py's
+      # resolve_frontend_base_path. Rebuild (`docker compose up --build`)
+      # after changing this -- see the build arg above.
+      FRONTEND_BASE_PATH: ${FRONTEND_BASE_PATH:-/}
+      # Comma-separated CORS/WebSocket-origin allowlist -- needed whenever
+      # the GUI is reached through a reverse proxy under a hostname other
+      # than localhost/127.0.0.1 (the built-in defaults), e.g.
+      # "https://lab.example.org". Without it, the app's own WebSocket
+      # origin check (see web/ws/session.py) rejects the live
+      # filter/crop/measure socket even though page load and REST calls
+      # still work. Equivalent to (repeated) `sfz gui --allow-origin`.
+      SFZ_ALLOW_ORIGIN: ${SFZ_ALLOW_ORIGIN:-}
       # Set to enable the shared-secret auth gate (see web/auth.py). Leave
       # unset for single-user local-first use.
       SFZ_AUTH_TOKEN: ${SFZ_AUTH_TOKEN:-}

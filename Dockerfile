@@ -2,6 +2,12 @@
 
 # ---- Stage 1: build the Svelte SPA -----------------------------------------
 FROM node:20-slim AS frontend-builder
+# Baked into the built JS at compile time (Vite's `base` config), so it must
+# be a build arg, not a runtime env var -- see vite.config.ts and
+# src/salafleezers/web/app.py's resolve_frontend_base_path. Passed through by
+# docker-compose.yml's build.args from the FRONTEND_BASE_PATH in .env.
+ARG FRONTEND_BASE_PATH=/
+ENV FRONTEND_BASE_PATH=$FRONTEND_BASE_PATH
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci

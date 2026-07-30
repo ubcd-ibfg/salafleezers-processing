@@ -181,3 +181,7 @@ Options:
 
 `--no-browser` is what the Docker image's `CMD` uses — there's no display inside a container
 to open a browser window in.
+
+Auth (`SFZ_AUTH_TOKEN`/`SFZ_TRUSTED_USER_HEADER`) and the path prefix the GUI is served under
+(`FRONTEND_BASE_PATH`) are environment variables rather than flags — see
+[Installation](installation.md#docker).

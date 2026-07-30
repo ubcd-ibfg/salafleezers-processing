@@ -88,3 +88,43 @@ class TestGuiCommandWiring:
         mock_create.assert_called_once_with(
             allow_origins=["https://a.example.com", "https://b.example.com"]
         )
+
+    def test_allow_origin_env_var_used_when_flag_absent(self, monkeypatch):
+        monkeypatch.delenv("SFZ_DATA_ROOT", raising=False)
+        monkeypatch.delenv("SFZ_RATE_LIMIT_PER_MINUTE", raising=False)
+        monkeypatch.setenv("SFZ_ALLOW_ORIGIN", "https://a.example.com, https://b.example.com")
+
+        fake_app = MagicMock()
+        with (
+            patch(
+                "salafleezers.web.app.create_app", return_value=fake_app
+            ) as mock_create,
+            patch("uvicorn.run"),
+        ):
+            result = runner.invoke(app, ["gui", "--no-browser"])
+
+        assert result.exit_code == 0, result.output
+        mock_create.assert_called_once_with(
+            allow_origins=["https://a.example.com", "https://b.example.com"]
+        )
+
+    def test_allow_origin_flag_takes_precedence_over_env_var(self, monkeypatch):
+        monkeypatch.delenv("SFZ_DATA_ROOT", raising=False)
+        monkeypatch.delenv("SFZ_RATE_LIMIT_PER_MINUTE", raising=False)
+        monkeypatch.setenv("SFZ_ALLOW_ORIGIN", "https://from-env.example.com")
+
+        fake_app = MagicMock()
+        with (
+            patch(
+                "salafleezers.web.app.create_app", return_value=fake_app
+            ) as mock_create,
+            patch("uvicorn.run"),
+        ):
+            result = runner.invoke(app, [
+                "gui", "--no-browser", "--allow-origin", "https://from-flag.example.com",
+            ])
+
+        assert result.exit_code == 0, result.output
+        mock_create.assert_called_once_with(
+            allow_origins=["https://from-flag.example.com"]
+        )

@@ -588,6 +588,7 @@ def _print_security_posture(
     """
     import os
 
+    from salafleezers.web.app import resolve_frontend_base_path
     from salafleezers.web.workspace import (
         max_upload_bytes,
         max_workspace_bytes,
@@ -612,6 +613,7 @@ def _print_security_posture(
     else:
         auth_desc = "[yellow]disabled (local-only)[/yellow]"
     table.add_row("Auth", auth_desc)
+    table.add_row("Base path", resolve_frontend_base_path() or "/ (root)")
     table.add_row(
         "File-open data root",
         f"[green]{data_root}[/green]" if data_root is not None
@@ -671,7 +673,8 @@ def gui(
         typer.Option(
             "--allow-origin",
             help="CORS origin to allow (repeatable). Unset = built-in "
-                 "localhost/127.0.0.1 defaults.",
+                 "localhost/127.0.0.1 defaults, or SFZ_ALLOW_ORIGIN "
+                 "(comma-separated) if set.",
         ),
     ] = None,
     rate_limit: Annotated[
@@ -690,7 +693,10 @@ def gui(
     Auth is controlled by the ``SFZ_AUTH_TOKEN`` env var (not a CLI flag,
     so the token never appears in shell history or ``ps`` output). See
     ``--data-root``/``--allow-origin``/``--rate-limit`` for hardening a
-    shared-server deployment.
+    shared-server deployment. ``--allow-origin`` also has an
+    ``SFZ_ALLOW_ORIGIN`` env var equivalent (comma-separated), for
+    deployments (e.g. Docker) where passing extra CLI flags isn't
+    convenient.
     """
     import logging
     import os
@@ -701,7 +707,7 @@ def gui(
     )
 
     try:
-        from salafleezers.web.app import create_app  # type: ignore[import]
+        from salafleezers.web.app import create_app, resolve_frontend_base_path  # type: ignore[import]
     except ImportError:
         err_console.print(
             "[bold red]GUI dependencies not installed.[/bold red]\n"
@@ -716,13 +722,21 @@ def gui(
         os.environ["SFZ_DATA_ROOT"] = str(data_root)
     if rate_limit is not None:
         os.environ["SFZ_RATE_LIMIT_PER_MINUTE"] = str(rate_limit)
+    if allow_origin is None:
+        # Docker's CMD is fixed, so a container deployment (behind a reverse
+        # proxy, e.g.) has no way to pass --allow-origin -- this env var is
+        # the equivalent for that case. Comma-separated since it stands in
+        # for a repeatable CLI flag.
+        env_allow_origin = os.environ.get("SFZ_ALLOW_ORIGIN")
+        if env_allow_origin:
+            allow_origin = [o.strip() for o in env_allow_origin.split(",") if o.strip()]
 
     _print_security_posture(
         data_root=data_root, allow_origin=allow_origin, rate_limit=rate_limit
     )
 
     web_app = create_app(allow_origins=allow_origin)
-    url = f"http://{host}:{port}"
+    url = f"http://{host}:{port}{resolve_frontend_base_path()}/"
     if not no_browser:
         webbrowser.open(url)
     console.print(f"[bold]sfz gui[/bold]  listening on [link={url}]{url}[/link]")

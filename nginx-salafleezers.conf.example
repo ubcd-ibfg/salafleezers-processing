@@ -1,0 +1,45 @@
+# Reverse-proxy snippet for serving the SalaFleezer GUI under a path prefix
+# (e.g. https://your-domain/salafleezers/) from an nginx host in front of
+# the Docker container.
+#
+# Paste the `location` block below into the appropriate `server { ... }`
+# block in your nginx config (e.g. /etc/nginx/sites-available/<your-site>),
+# then:
+#
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Companion settings on the container side (see .env.example):
+#   FRONTEND_BASE_PATH=/salafleezers   # must match the location path below,
+#                                      # and requires `docker compose up --build`
+#                                      # to take effect (baked in at build time)
+#   SFZ_ALLOW_ORIGIN=https://your-domain   # the origin the browser actually
+#                                          # uses -- not the container's LAN IP.
+#                                          # Without this the app's own
+#                                          # WebSocket-origin check rejects the
+#                                          # live filter/crop/measure socket.
+
+# ─── salafleezers ────────────────────────────────────────
+location /salafleezers {
+    auth_basic "Acceso restringido";
+    auth_basic_user_file /etc/nginx/.salafleezers-htpasswd;  # create with `htpasswd -c`
+
+    # No trailing slash on either side (location or proxy_pass target) --
+    # that's what makes nginx forward the /salafleezers prefix through
+    # unstripped instead of rewriting it away. The backend, when
+    # FRONTEND_BASE_PATH is set, only listens under that same prefix, so
+    # stripping it here would 404 everything.
+    proxy_pass http://192.168.100.24:8765;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Required for the live filter/crop/measure WebSocket
+    # (wss://.../salafleezers/ws/session/{id}) -- without these, nginx
+    # never upgrades the connection and the socket just fails, even
+    # though the page and REST calls work fine.
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}

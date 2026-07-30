@@ -192,6 +192,8 @@ Auth for a small shared-lab deployment is controlled by two environment variable
 
 See [`src/salafleezers/web/auth.py`](src/salafleezers/web/auth.py).
 
+To serve the GUI under a path prefix instead of the domain root (e.g. behind a reverse proxy at `https://lab.example.org/salafleezer/`), set `FRONTEND_BASE_PATH` (e.g. `/salafleezer`) *before* building the frontend — it's baked into the compiled JS at build time (Vite's `base` config) and mirrored by the backend, which mounts the SPA, `/api`, and `/ws` under the same prefix instead of at `/`. See [`src/salafleezers/web/app.py`](src/salafleezers/web/app.py)'s `resolve_frontend_base_path`.
+
 See the [GUI walkthrough](docs/user-guide/gui-walkthrough.md) for a full tour with screenshots.
 
 ---
@@ -205,6 +207,21 @@ docker compose up --build
 ```
 
 The GUI is then reachable at `http://localhost:8765` by default (override the host port with `SFZ_PORT` in a `.env` file, see `.env.example`). Sessions and uploaded data persist in a named volume (`sfz-sessions`) across container replacement. Set `SFZ_AUTH_TOKEN`/`SFZ_TRUSTED_USER_HEADER` in the environment to harden a shared deployment (see `.env.example`).
+
+To reach it under a path prefix instead of the root (e.g. `http://localhost:8765/salafleezer/`, for a reverse proxy that forwards the path through unstripped), set `FRONTEND_BASE_PATH` in `.env` and rebuild:
+
+```bash
+# .env
+FRONTEND_BASE_PATH=/salafleezer
+```
+
+```bash
+docker compose up --build
+```
+
+The rebuild is required because the value is baked into the compiled frontend at image-build time (`docker-compose.yml` passes it as both a build arg, for the Node build stage, and a runtime env var, for the Python backend, from the same `.env` value) — it isn't picked up by just restarting the container.
+
+Behind a reverse proxy under a hostname other than `localhost`/`127.0.0.1`, also set `SFZ_ALLOW_ORIGIN` (comma-separated, e.g. `https://lab.example.org`) in `.env` — otherwise the page loads and REST calls work, but the app's own WebSocket-origin check rejects the live filter/crop/measure socket. The proxy itself also needs to forward WebSocket upgrades (`Upgrade`/`Connection` headers), which most reverse proxies don't do by default for a plain `location`/`proxy_pass` block. See [`nginx-salafleezers.conf.example`](nginx-salafleezers.conf.example) for a ready-to-paste nginx `location` block with all of this wired up.
 
 To also reach files already on the host by server path (the legacy flow, useful for scripted workflows), copy `docker-compose.override.yml.example` to `docker-compose.override.yml` and set `SFZ_DATA_DIR`.
 

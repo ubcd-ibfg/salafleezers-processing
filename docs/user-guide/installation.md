@@ -79,6 +79,26 @@ deployment, set via environment (see `.env.example`):
 - `SFZ_TRUSTED_USER_HEADER` — read the caller's identity from a header set by an authenticating
   reverse proxy, so each person gets an isolated workspace instead of sharing one under
   `SFZ_AUTH_TOKEN`.
+- `FRONTEND_BASE_PATH` — serve the GUI under a path prefix instead of the root, e.g.
+  `/salafleezer` to reach it at `http://localhost:8765/salafleezer/`. Useful behind a reverse
+  proxy that forwards the path through unstripped. This is baked into the compiled frontend at
+  image-build time (`docker-compose.yml` passes it through to the Node build stage as a build
+  arg, in addition to setting it as a runtime env var for the Python backend), so changing it
+  requires `docker compose up --build`, not just a restart. See the [request-flow
+  section](../developer/architecture.md#request-flow-web-gui) of the architecture doc for how
+  the backend and frontend builds stay in sync.
+- `SFZ_ALLOW_ORIGIN` — comma-separated CORS/WebSocket-origin allowlist, needed whenever the GUI
+  is reached through a reverse proxy under a hostname other than `localhost`/`127.0.0.1` (the
+  built-in defaults), e.g. `https://lab.example.org`. Without it, page load and REST calls still
+  work, but the app's own WebSocket-origin check (`web/ws/session.py`) rejects the live
+  filter/crop/measure socket. Equivalent to `sfz gui --allow-origin` (repeatable), for
+  deployments where passing extra CLI flags isn't convenient.
+
+!!! warning "Reverse proxy must forward WebSocket upgrades"
+    A plain `location`/`proxy_pass` block doesn't do this by default — without forwarding the
+    `Upgrade`/`Connection` headers (and `proxy_http_version 1.1;`), the live filter/crop/measure
+    socket fails even after `SFZ_ALLOW_ORIGIN` is set correctly. See `nginx-salafleezers.conf.example`
+    in the repo root for a ready-to-paste nginx `location` block with all of this wired up.
 
 To also reach files already on the host by server path (the legacy flow — useful for scripted
 workflows, not needed for normal upload-based use), copy `docker-compose.override.yml.example`

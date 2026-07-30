@@ -37,7 +37,14 @@ inherits that correctness for free.
 ## Request flow (web GUI)
 
 1. `sfz gui` calls `web.app.create_app()`, which builds a FastAPI app, mounts the REST routers
-   and the WebSocket endpoint, and serves the built SPA's static files at `/`.
+   and the WebSocket endpoint, and serves the built SPA's static files at `/`. If
+   `FRONTEND_BASE_PATH` is set (e.g. `/salafleezer`, for a reverse proxy that forwards the path
+   through unstripped), `create_app()` instead nests that whole app under the prefix via
+   Starlette's `Mount` — which forwards both HTTP and WebSocket scopes and adjusts `root_path`
+   as it goes — and redirects bare `/` requests to `{prefix}/`. The frontend build reads the
+   same env var (`vite.config.ts`) to set Vite's `base`, so the SPA's compiled-in asset/API/WS
+   URLs line up with wherever the backend ends up mounted; see
+   [Installation](../user-guide/installation.md#docker).
 2. The frontend calls `POST /api/sessions` once on load to get a session ID (persisted in
    `localStorage` so a page refresh resumes the same session). Data gets in via
    `POST /api/uploads` + `POST /api/uploads/{id}/files` (one request per file, streamed into a

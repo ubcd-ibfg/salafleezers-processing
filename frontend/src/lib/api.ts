@@ -37,6 +37,11 @@ export class ApiError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 60_000
 
+// import.meta.env.BASE_URL is Vite's resolved `base` config (see
+// vite.config.ts), already normalized to end in "/" -- strip that trailing
+// slash so callers below can keep writing leading-slash paths like '/api/...'.
+export const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '')
+
 async function request<T>(
   path: string,
   init?: RequestInit & { signal?: AbortSignal; timeoutMs?: number },
@@ -51,7 +56,7 @@ async function request<T>(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (auth.token) headers['Authorization'] = `Bearer ${auth.token}`
 
-  const res = await fetch(path, { headers, signal, ...rest })
+  const res = await fetch(BASE_PATH + path, { headers, signal, ...rest })
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -119,7 +124,7 @@ export const api = {
   ): Promise<UploadedFileInfo> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', `/api/uploads/${datasetId}/files`)
+      xhr.open('POST', `${BASE_PATH}/api/uploads/${datasetId}/files`)
       if (auth.token) xhr.setRequestHeader('Authorization', `Bearer ${auth.token}`)
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total)

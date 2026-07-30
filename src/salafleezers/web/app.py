@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, RedirectResponse
 
 from salafleezers.web.api import analysis, files, sessions, traces, uploads
 from salafleezers.web.auth import (
@@ -132,6 +132,22 @@ def _find_spa_dir() -> Path:
 
 
 _SPA_DIR = _find_spa_dir()
+
+
+def resolve_frontend_base_path() -> str:
+    """Read ``FRONTEND_BASE_PATH`` from the environment, normalized.
+
+    Returns ``""`` for the default root deployment, or ``"/segment"`` (single
+    leading slash, no trailing slash) otherwise. The frontend build reads the
+    same variable (see ``frontend/vite.config.ts``) so the SPA's baked-in
+    asset/API/WS URLs line up with wherever the backend mounts itself.
+    """
+    raw = os.environ.get("FRONTEND_BASE_PATH")
+    if not raw:
+        return ""
+    trimmed = raw.strip("/")
+    return f"/{trimmed}" if trimmed else ""
+
 
 _DEFAULT_ORIGINS = [
     "http://localhost:5173",   # Vite dev server
@@ -259,4 +275,22 @@ def create_app(
         from fastapi.staticfiles import StaticFiles
         app.mount("/", StaticFiles(directory=str(_SPA_DIR), html=True), name="spa")
 
-    return app
+    base_path = resolve_frontend_base_path()
+    if not base_path:
+        return app
+
+    # Serve everything (SPA, /api, /ws) under a path prefix instead of at the
+    # domain root -- for a deployment reachable at e.g.
+    # https://lab.example.org/salafleezer/ behind a reverse proxy that
+    # forwards the path through unstripped. Starlette's Mount forwards both
+    # HTTP and WebSocket scopes and adjusts root_path as it goes, so
+    # FastAPI's own URL generation (OpenAPI, docs) stays correct without any
+    # extra bookkeeping here.
+    outer = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    outer.mount(base_path, app)
+
+    @outer.get("/", include_in_schema=False)
+    async def _redirect_to_base_path() -> RedirectResponse:
+        return RedirectResponse(url=f"{base_path}/")
+
+    return outer
