@@ -57,6 +57,26 @@ note how the density peaks line up exactly with the step levels above:
 
 ![Kernel density panel](../assets/screenshots/04-analysis-panel-kde.png)
 
+## Calibration viewer
+
+The Calibration viewer turns raw `.dat` acquisitions into calibrated force/extension traces
+without leaving the browser — the GUI equivalent of `sfz calibrate` plus one `sfz process` batch
+line (see [Calibration & trap stiffness](../physics/calibration.md)).
+
+**Fit calibration** operates on whichever calibration `.dat` is currently open (click one in the
+data rail, same as any other trace). Set the two bead radii, optionally expand **advanced fit
+parameters** for `f_min`/`f_max`/points-per-bin/aliasing order — the same knobs `sfz calibrate`
+exposes — then **Run calibration**. The result is a 2×2 grid of log-log power-spectrum plots, one
+per detector axis (`AX`/`BX`/`AY`/`BY`), each with the fitted Lorentzian overlaid and a
+`fc`/`α`/`κ`/`χ²` readout underneath; an axis whose fit didn't converge is flagged inline.
+
+**Apply → force/extension** takes that fit (or a fresh calibration `.dat`, if you'd rather fit
+one for this run specifically) together with a data file and an optional offset file, and
+produces a force/extension trace — written into the data file's own dataset under `processed/`
+and opened straight into the Trace Viewer. If the data file has no `_pos` sidecar, a warning
+explains that extension won't be physically meaningful (trap separation defaults to zero) while
+force is unaffected — the same missing-sidecar situation the data rail already flags on upload.
+
 ## Force-Extension viewer
 
 The Force-Extension viewer (replacing `ForExtGUI_V2.m`) plots one channel against another —
@@ -72,8 +92,9 @@ curve. It's here to show the UI working, not to demonstrate a real fit.)
 ## Theming & shortcuts
 
 Toggle dark/light with the button in the top right, or press `t`. Hover the keyboard icon (⌨)
-for the full shortcut list: `1`/`2` switch views, `z`/`c`/`m`/`0` zoom/crop/measure/reset,
-Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z undo/redo, Ctrl/Cmd+S saves the session.
+for the full shortcut list: `1`/`2`/`3` switch between Trace Viewer/Calibration/Force-Extension,
+`z`/`c`/`m`/`0` zoom/crop/measure/reset, Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z undo/redo, Ctrl/Cmd+S saves
+the session.
 
 ![Dark mode](../assets/screenshots/06-dark-mode.png)
 

@@ -7,7 +7,7 @@
 The SalaFleezer instrument records raw QPD voltage traces in binary `.dat` files. This repository provides the end-to-end processing workflow: loading and validating raw traces, calibrating trap stiffness with Lorentzian power-spectrum fitting, and converting detector signals into force (pN) and extension (nm) outputs for downstream single-molecule analysis. The project is organized into three pillars:
 
 - A **CLI** (`sfz`) — inspect, calibrate, batch-process, and run every analysis routine headlessly.
-- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA for interactively browsing traces, fitting force-extension curves, and running every analysis routine, with browser upload as the primary way to get data in.
+- A **web GUI** (`sfz gui`) — a FastAPI backend + Svelte SPA for interactively browsing traces, calibrating trap stiffness and converting raw acquisitions into force/extension, fitting force-extension curves, and running every analysis routine, with browser upload as the primary way to get data in.
 - A **documentation site** — user guide, physics & methods, and developer guide.
 
 ---
@@ -369,7 +369,7 @@ salafleezers-processing/
 │   │   └── main.py             — sfz inspect/calibrate/process/stepfind/wlc-fit/velocity/pwd/gui
 │   └── web/                     — FastAPI backend (optional `gui` extra)
 │       ├── app.py              — app factory, mounts the built SPA
-│       ├── api/                 — REST routers (files, uploads, sessions, traces, analysis)
+│       ├── api/                 — REST routers (files, uploads, sessions, traces, analysis, calibration)
 │       ├── ws/session.py       — WebSocket for live filter/crop/measure/decimate
 │       ├── schemas.py          — pydantic request/response models
 │       ├── sessions.py         — session state: durable file refs + a byte-bounded array cache

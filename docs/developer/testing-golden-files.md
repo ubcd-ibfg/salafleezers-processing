@@ -81,6 +81,13 @@ calibration/processing pipeline. The pattern above extends directly — find the
 reference routine in a BLabOTMatlab checkout, write a `gen_<name>.m`, add a converter entry, add
 a `test_<name>_golden.py`.
 
+The processing pipeline does have one narrower regression test worth knowing about, in
+`tests/test_processing.py`: `process_from_dats` (the filename-free core the web GUI's
+`POST /api/process` calls) is asserted array-equal to `process_one` on the same synthetic
+triplet. That pins the refactor that extracted the core — it is not a golden-file test, since
+there's no independently computed reference for the whole triplet's output, only an equivalence
+check between the two entry points into the same code.
+
 ## A real bug this caught
 
 Golden-testing `window_filter` against the reference implementation's output showed edge values

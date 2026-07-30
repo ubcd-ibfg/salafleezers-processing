@@ -76,3 +76,15 @@ Each trap/axis (`AX`, `BX`, `AY`, `BY`) is calibrated independently — `sfz cal
 \(f_c\), \(\alpha\), and \(\kappa\) for all four. A hydrodynamic-correction variant
 (`lorentzian.lorentzian_hydro`, accounting for frequency-dependent drag near a surface) is
 implemented but not used by default — see its docstring for when it matters.
+
+## From the GUI
+
+The same fit is reachable without the CLI: the web GUI's Calibration view (`sfz gui`) calls
+`POST /api/calibrate`, which loops the same four axes and displays each one's binned power
+spectrum with the fitted Lorentzian overlaid, plus \(\chi^2\) and a convergence flag surfaced from
+`scipy.optimize.least_squares`'s own success/residual — not previously exposed on
+`CalibrationResult`. The GUI can also *apply* a fit: `POST /api/process` combines it with a data
+and offset file to produce a force/extension trace, via the same
+`processing.pipeline.process_from_dats` core `sfz process` uses — see
+[Architecture](../developer/architecture.md#request-flow-web-gui) and
+[GUI walkthrough](../user-guide/gui-walkthrough.md#calibration-viewer).

@@ -14,7 +14,8 @@ src/salafleezers/
 ├── cli/                 — Typer + Rich (sfz command)
 └── web/                 — FastAPI backend (optional [gui] extra)
     ├── app.py           —   app factory, mounts the built SPA
-    ├── api/              —   REST routers (sessions, files, uploads, traces, analysis)
+    ├── api/              —   REST routers (sessions, files, uploads, traces, analysis, calibration)
+    │   └── _common.py    —     shared helpers (session/file/channel resolution, resource guards)
     ├── ws/               —   WebSocket session protocol (live filter/crop/measure)
     ├── schemas.py        —   pydantic models shared by REST + WS + (conceptually) the frontend
     ├── sessions.py       —   session state: durable FileRef/document + a byte-bounded ArrayCache
@@ -60,6 +61,14 @@ inherits that correctness for free.
    is a `POST /api/<name>` call into `web/api/analysis.py`, which does essentially nothing but
    unwrap the request, call straight into `analysis.*`, and wrap the result — see [Adding an
    analysis module](adding-analysis-module.md) for the exact pattern.
+5. The Calibration view follows the same shape from `web/api/calibration.py`: `POST /api/calibrate`
+   fits `calibration.fit.calibrate` on each QPD axis of an already-opened calibration trace, and
+   `POST /api/process` calls `processing.pipeline.process_from_dats` — the same core `sfz process`
+   uses internally, extracted from `process_one` so it can run on files with arbitrary uploaded
+   names rather than the batch file's numbered `{mmddyy}_{num:03d}.dat` convention — then writes
+   the resulting force/extension trace back into the data file's own uploaded dataset and opens it
+   via the same helper `POST /api/files/open` uses, so it appears in the Trace Viewer exactly like
+   any other trace.
 
 ## Session state, storage & auth
 
