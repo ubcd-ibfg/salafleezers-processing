@@ -148,6 +148,7 @@ class WorkspaceBackend(Protocol):
     def get_dataset(self, user_id: str, dataset_id: str) -> "Dataset": ...
     def list_datasets(self, user_id: str) -> list["Dataset"]: ...
     def delete_dataset(self, user_id: str, dataset_id: str) -> None: ...
+    def delete_entry(self, user_id: str, dataset_id: str, relative_path: str) -> "Dataset": ...
     def resolve_file_path(
         self, user_id: str, dataset_id: str, relative_path: str
     ) -> Path: ...
@@ -343,6 +344,32 @@ class WorkspaceStore:
         path = self._dataset_dir(user_id, dataset_id)
         if path.exists():
             shutil.rmtree(path)
+
+    def delete_entry(self, user_id: str, dataset_id: str, relative_path: str) -> Dataset:
+        """Delete one uploaded file or an entire subfolder, then re-finalize.
+
+        A trace's sidecars are looked up from the current manifest and deleted
+        alongside it -- otherwise a lone ``_pos``/``_fl`` file becomes
+        invisible dead weight, since the UI only ever lists ``kind == "trace"``
+        entries. Re-finalizing afterward (rather than patching the manifest by
+        hand) keeps entries/sidecar-links/``missing_sidecars`` derived from
+        what's actually left on disk, the same as after any upload.
+        """
+        path = self.resolve_file_path(user_id, dataset_id, relative_path)
+
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.is_file():
+            current = self.get_dataset(user_id, dataset_id)
+            entry = next((e for e in current.entries if e.relative_path == relative_path), None)
+            if entry is not None and entry.kind == "trace":
+                for sidecar_rel in entry.sidecars:
+                    self.resolve_file_path(user_id, dataset_id, sidecar_rel).unlink(missing_ok=True)
+            path.unlink()
+        else:
+            raise FileNotFoundError(f"'{relative_path}' not found in dataset '{dataset_id}'")
+
+        return self.finalize_dataset(user_id, dataset_id)
 
     def _write_manifest(self, ds: Dataset) -> None:
         path = self._manifest_path(ds.user_id, ds.dataset_id)

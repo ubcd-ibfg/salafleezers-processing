@@ -23,6 +23,13 @@ location /salafleezers {
     auth_basic "Acceso restringido";
     auth_basic_user_file /etc/nginx/.salafleezers-htpasswd;  # create with `htpasswd -c`
 
+    # nginx's own default (1m) is far below the app's per-file upload cap
+    # (SFZ_MAX_UPLOAD_BYTES, 1 GB by default -- see web/workspace.py) --
+    # without this, nginx itself 413s any uploaded file over ~1 MB before
+    # the request ever reaches the container. Raise this if
+    # SFZ_MAX_UPLOAD_BYTES is configured higher than 1 GB.
+    client_max_body_size 1100m;
+
     # No trailing slash on either side (location or proxy_pass target) --
     # that's what makes nginx forward the /salafleezers prefix through
     # unstripped instead of rewriting it away. The backend, when

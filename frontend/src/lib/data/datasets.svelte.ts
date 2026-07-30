@@ -26,6 +26,13 @@ class DatasetStore {
     await api.deleteDataset(datasetId)
     this.datasets = this.datasets.filter((d) => d.dataset_id !== datasetId)
   }
+
+  /** Delete a single file or a whole subfolder within a dataset. */
+  async removeEntry(datasetId: string, relativePath: string): Promise<Dataset> {
+    const updated = await api.deleteEntry(datasetId, relativePath)
+    this.upsert(updated)
+    return updated
+  }
 }
 
 export const datasets = new DatasetStore()

@@ -405,7 +405,8 @@ The full documentation site (MkDocs Material) covers installation, CLI reference
 
 ```bash
 uv sync --extra docs
-uv run mkdocs serve   # http://127.0.0.1:8000
+uv run mkdocs serve                    # http://127.0.0.1:8000
+uv run mkdocs serve -a 127.0.0.1:8001  # pick a different port if 8000 is already in use
 ```
 
 ---

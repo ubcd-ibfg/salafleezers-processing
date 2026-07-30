@@ -172,6 +172,59 @@ class TestWorkspaceStoreUnit:
         with pytest.raises(FileNotFoundError):
             store.get_dataset("local", ds.dataset_id)
 
+    def test_delete_entry_removes_single_file(self, store):
+        ds = store.create_dataset("local", "ds")
+        store.receive_file("local", ds.dataset_id, "a.npz", [b"x" * 10])
+        store.receive_file("local", ds.dataset_id, "b.npz", [b"y" * 5])
+        store.finalize_dataset("local", ds.dataset_id)
+
+        result = store.delete_entry("local", ds.dataset_id, "a.npz")
+
+        assert {e.relative_path for e in result.entries} == {"b.npz"}
+        assert result.total_bytes == 5
+        assert not store.resolve_file_path("local", ds.dataset_id, "a.npz").exists()
+
+    def test_delete_entry_cascades_to_sidecars(self, store, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        dat = make_dat_file(src / "a.dat", n_samples=32, extra_data=2)
+        pos = make_pos_sidecar(src / "a_pos.dat", n_samples=32)
+
+        ds = store.create_dataset("local", "ds")
+        store.receive_file("local", ds.dataset_id, "a.dat", [dat.read_bytes()])
+        store.receive_file("local", ds.dataset_id, "a_pos.dat", [pos.read_bytes()])
+        store.finalize_dataset("local", ds.dataset_id)
+
+        result = store.delete_entry("local", ds.dataset_id, "a.dat")
+
+        assert result.entries == []
+        assert not store.resolve_file_path("local", ds.dataset_id, "a.dat").exists()
+        assert not store.resolve_file_path("local", ds.dataset_id, "a_pos.dat").exists()
+
+    def test_delete_entry_removes_subfolder(self, store):
+        ds = store.create_dataset("local", "ds")
+        store.receive_file("local", ds.dataset_id, "260625/a.dat", [b"x"])
+        store.receive_file("local", ds.dataset_id, "260625/b.dat", [b"y"])
+        store.receive_file("local", ds.dataset_id, "270625/c.dat", [b"z"])
+        store.finalize_dataset("local", ds.dataset_id)
+
+        result = store.delete_entry("local", ds.dataset_id, "260625")
+
+        assert {e.relative_path for e in result.entries} == {"270625/c.dat"}
+        assert not store.resolve_file_path("local", ds.dataset_id, "260625/a.dat").parent.exists()
+        assert store.resolve_file_path("local", ds.dataset_id, "270625/c.dat").exists()
+
+    def test_delete_entry_missing_path_raises(self, store):
+        ds = store.create_dataset("local", "ds")
+        with pytest.raises(FileNotFoundError):
+            store.delete_entry("local", ds.dataset_id, "nope.dat")
+
+    @pytest.mark.parametrize("bad", ["../evil.dat", "/etc/passwd", "a/../../b.dat"])
+    def test_delete_entry_rejects_traversal(self, store, bad):
+        ds = store.create_dataset("local", "ds")
+        with pytest.raises(InvalidSegmentError):
+            store.delete_entry("local", ds.dataset_id, bad)
+
     def test_list_datasets_scoped_by_user(self, store):
         store.create_dataset("alice", "a")
         store.create_dataset("bob", "b")
@@ -277,6 +330,61 @@ class TestUploadsAPI:
         assert r.status_code == 200
         r = client.get(f"/api/uploads/{dataset_id}")
         assert r.status_code == 404
+
+    def test_delete_entry_removes_file(self, client, upload_store):
+        dataset_id = client.post("/api/uploads", json={"name": "ds"}).json()["dataset_id"]
+        _upload(client, dataset_id, "a.npz", b"x" * 10)
+        _upload(client, dataset_id, "b.npz", b"y" * 5)
+        client.post(f"/api/uploads/{dataset_id}/finalize")
+
+        r = client.delete(f"/api/uploads/{dataset_id}/entries/a.npz")
+        assert r.status_code == 200
+        body = r.json()
+        assert {e["relative_path"] for e in body["entries"]} == {"b.npz"}
+        assert body["total_bytes"] == 5
+
+    def test_delete_entry_removes_subfolder(self, client, upload_store):
+        dataset_id = client.post("/api/uploads", json={"name": "ds"}).json()["dataset_id"]
+        _upload(client, dataset_id, "260625/a.dat", b"x")
+        _upload(client, dataset_id, "270625/b.dat", b"y")
+        client.post(f"/api/uploads/{dataset_id}/finalize")
+
+        r = client.delete(f"/api/uploads/{dataset_id}/entries/260625")
+        assert r.status_code == 200
+        assert {e["relative_path"] for e in r.json()["entries"]} == {"270625/b.dat"}
+
+    def test_delete_entry_missing_returns_404(self, client, upload_store):
+        dataset_id = client.post("/api/uploads", json={"name": "ds"}).json()["dataset_id"]
+        r = client.delete(f"/api/uploads/{dataset_id}/entries/nope.dat")
+        assert r.status_code == 404
+
+    @pytest.mark.parametrize("bad_path", ["%2e%2e%2Fevil.dat", "a/%2e%2e%2F%2e%2e%2Fb.dat"])
+    def test_delete_entry_rejects_path_traversal(self, client, upload_store, bad_path):
+        """Percent-encoded ``..`` segments -- plain ``../`` in the URL is
+        normalized away by the HTTP client itself before the request is even
+        sent, so it never reaches the server's own path-safety check. This
+        confirms that check still rejects traversal that does arrive intact.
+        """
+        dataset_id = client.post("/api/uploads", json={"name": "ds"}).json()["dataset_id"]
+        r = client.delete(f"/api/uploads/{dataset_id}/entries/{bad_path}")
+        assert r.status_code == 400
+
+    def test_delete_entry_isolated_between_principals(self, client, monkeypatch, upload_store):
+        monkeypatch.setenv("SFZ_TRUSTED_USER_HEADER", "X-Test-User")
+        alice = {"X-Test-User": "alice"}
+        bob = {"X-Test-User": "bob"}
+
+        dataset_id = client.post(
+            "/api/uploads", json={"name": "ds"}, headers=alice
+        ).json()["dataset_id"]
+        _upload(client, dataset_id, "a.dat", b"x", headers=alice)
+        client.post(f"/api/uploads/{dataset_id}/finalize", headers=alice)
+
+        r = client.delete(f"/api/uploads/{dataset_id}/entries/a.dat", headers=bob)
+        assert r.status_code == 404
+
+        r = client.get(f"/api/uploads/{dataset_id}", headers=alice)
+        assert len(r.json()["entries"]) == 1
 
     def test_datasets_isolated_between_principals(self, client, monkeypatch):
         monkeypatch.setenv("SFZ_TRUSTED_USER_HEADER", "X-Test-User")

@@ -27,8 +27,6 @@ For scripted or CLI workflows where the files are already on the same host `sfz 
 the backend still accepts an ordinary server path via the API — see `--data-root` in
 [Installation](installation.md) — but that is no longer a UI affordance.
 
-*(Screenshots below predate this flow and are due for a re-shoot; the described behavior is current.)*
-
 ![Empty state](../assets/screenshots/01-empty-state.png)
 
 ## Trace Viewer
@@ -67,10 +65,9 @@ typically force vs. extension — and fits an extensible WLC model
 
 ![Force-extension viewer with WLC fit](../assets/screenshots/05-force-extension.png)
 
-(This particular fit is nonsense — `P=200nm` and `S=100000pN` are both pinned at their upper
-bounds, and χ² is enormous — because the demo data's "force" and "extension" channels are
-independent random noise, not a real pulling curve. It's here to show the UI working, not to
-demonstrate a real fit.)
+(This particular fit is nonsense — `P` is pinned at its upper bound and χ² is enormous — because
+the demo data's "force" and "extension" channels are independent random noise, not a real pulling
+curve. It's here to show the UI working, not to demonstrate a real fit.)
 
 ## Theming & shortcuts
 

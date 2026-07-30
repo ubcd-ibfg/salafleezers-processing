@@ -6,6 +6,7 @@ POST   /api/uploads/{id}/finalize      → classify entries, write the manifest
 GET    /api/uploads                    → list this principal's datasets
 GET    /api/uploads/{id}               → dataset detail
 DELETE /api/uploads/{id}               → remove a dataset from disk
+DELETE /api/uploads/{id}/entries/{relative_path} → remove one file or subfolder
 
 One HTTP request per file (not one multipart request with N files) is what
 gives per-file progress, bounded memory, and the ability to retry a single
@@ -114,6 +115,25 @@ def upload_file(
         file.file.close()
 
     return UploadedFileOut(relative_path=_safe_relpath(relative_path), size_bytes=written)
+
+
+@router.delete("/{dataset_id}/entries/{relative_path:path}", response_model=DatasetOut)
+def delete_entry(
+    dataset_id: str, relative_path: str, principal: Principal = Depends(get_current_principal)
+):
+    """Delete one uploaded file or an entire subfolder within a dataset.
+
+    A single route handles both: ``relative_path`` may address a file
+    (``260625/260625_001.dat``) or a subfolder (``260625``), the latter
+    removing every file under it.
+    """
+    try:
+        ds = workspace_store.delete_entry(principal.user_id, dataset_id, relative_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    except InvalidSegmentError:
+        raise HTTPException(status_code=400, detail="Invalid relative_path")
+    return _to_dataset_out(ds)
 
 
 @router.post("/{dataset_id}/finalize", response_model=DatasetOut)

@@ -17,6 +17,7 @@ uv run ruff check src tests     # lint
 uv run mypy src                 # type check (non-strict)
 mamba run -n node npm run check --prefix frontend   # frontend typecheck (Svelte + TS)
 mkdocs serve                    # this site, live-reloading, at http://127.0.0.1:8000
+mkdocs serve -a 127.0.0.1:8001  # same, on a different port if 8000 is taken
 ```
 
 ## Before opening a PR

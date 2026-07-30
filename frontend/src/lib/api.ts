@@ -112,6 +112,12 @@ export const api = {
   getDataset: (datasetId: string) => request<Dataset>(`/api/uploads/${datasetId}`),
   deleteDataset: (datasetId: string) =>
     request<{ deleted: string }>(`/api/uploads/${datasetId}`, { method: 'DELETE' }),
+  /** relativePath may address a single file or a subfolder (deletes everything under it). */
+  deleteEntry: (datasetId: string, relativePath: string) =>
+    request<Dataset>(
+      `/api/uploads/${datasetId}/entries/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
+      { method: 'DELETE' },
+    ),
   /**
    * XHR-based, not fetch: `fetch` has no upload-progress event, and progress
    * feedback is the point when a folder drop can be hundreds of files.

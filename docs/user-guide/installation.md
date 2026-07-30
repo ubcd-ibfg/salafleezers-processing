@@ -100,6 +100,14 @@ deployment, set via environment (see `.env.example`):
     socket fails even after `SFZ_ALLOW_ORIGIN` is set correctly. See `nginx-salafleezers.conf.example`
     in the repo root for a ready-to-paste nginx `location` block with all of this wired up.
 
+!!! warning "Reverse proxy must raise its own body-size limit"
+    The app accepts uploads up to `SFZ_MAX_UPLOAD_BYTES` (1 GB per file by default), but nginx's
+    own default (`client_max_body_size 1m`) is far smaller and rejects anything over it with `413
+    Request Entity Too Large` before the request ever reaches the container. Set
+    `client_max_body_size` in the reverse proxy to at least that value (see
+    `nginx-salafleezers.conf.example` in the repo root), and raise it further if you increase
+    `SFZ_MAX_UPLOAD_BYTES`.
+
 To also reach files already on the host by server path (the legacy flow — useful for scripted
 workflows, not needed for normal upload-based use), copy `docker-compose.override.yml.example`
 to `docker-compose.override.yml` and set `SFZ_DATA_DIR` there; it mounts your directory
