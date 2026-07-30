@@ -66,6 +66,13 @@
     return { start, end, nSamples }
   })
 
+  // Channels come back in acquisition order; present them alphabetically so
+  // they're findable in the picker. `numeric` keeps AX2 ahead of AX10.
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+  let sortedChannels = $derived(
+    [...(session.activeFile?.channels ?? [])].sort((a, b) => collator.compare(a, b)),
+  )
+
   // Reset per-file state when the active file changes.
   let lastFileId: string | null = null
   $effect(() => {
@@ -371,7 +378,7 @@
       <label>
         Channel
         <select bind:value={primaryChannel}>
-          {#each session.activeFile.channels as ch (ch)}
+          {#each sortedChannels as ch (ch)}
             <option value={ch}>{ch}</option>
           {/each}
         </select>
@@ -380,7 +387,7 @@
       <div>
         <span class="label">Overlay</span>
         <div class="row-center" style="margin-top: 4px;">
-          {#each session.activeFile.channels.filter((c) => c !== primaryChannel) as ch (ch)}
+          {#each sortedChannels.filter((c) => c !== primaryChannel) as ch (ch)}
             <label style="flex-direction: row; align-items: center; gap: 4px;">
               <input
                 type="checkbox"
