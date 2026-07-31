@@ -131,7 +131,10 @@
   function psdAxes(): uPlot.Axis[] {
     theme.current
     const [xAxis, yAxis] = themedAxes()
-    return [xAxis, { ...yAxis, values: (_u, splits) => splits.map(formatLogTick) }]
+    return [
+      { ...xAxis, label: 'Frequency (Hz)', labelSize: 22 },
+      { ...yAxis, label: 'PSD (V²/Hz)', labelSize: 34, values: (_u, splits) => splits.map(formatLogTick) },
+    ]
   }
 
   // ---------------------------------------------------------------------
@@ -267,6 +270,7 @@
     {/if}
 
     {#if calResult}
+      <span class="dim mono" style="font-size: var(--text-xs);">{session.activeFile.filename}</span>
       {#if calResult.skipped.length}
         <p class="dim">Skipped (channel not present): {calResult.skipped.join(', ')}</p>
       {/if}

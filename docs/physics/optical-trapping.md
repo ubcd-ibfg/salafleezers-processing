@@ -3,14 +3,14 @@
 ## The harmonic trap approximation
 
 A dielectric bead held near the focus of a tightly-focused laser beam experiences a restoring
-force toward the beam's intensity maximum. For small displacements \(x\) from the trap centre,
+force toward the beam's intensity maximum. For small displacements $x$ from the trap centre,
 this force is linear:
 
-\[
+$$
 F = -\kappa x
-\]
+$$
 
-where \(\kappa\) (pN/nm) is the **trap stiffness**. This is the same physics as a bead on a
+where $\kappa$ (pN/nm) is the **trap stiffness**. This is the same physics as a bead on a
 spring, and it's the reason the whole calibration pipeline below is just "measure a spring
 constant" — but measured through Brownian motion rather than a static deflection test, since
 you can't easily apply a known force to a bead at this scale.
@@ -25,7 +25,7 @@ these raw QPD voltages (channels named `AX`, `AY`, `BX`, `BY`, … for trap A/B,
 off the digitizer as `int16` — see [Data formats](../user-guide/data-formats.md).
 
 Converting a raw voltage to a displacement in nm requires knowing the **position sensitivity**
-\(\alpha\) (nm/V) — one of the two numbers calibration solves for (the other being \(\kappa\)
+$\alpha$ (nm/V) — one of the two numbers calibration solves for (the other being $\kappa$
 itself). See [Calibration & trap stiffness](calibration.md).
 
 ## Brownian motion in a trap: the power-spectrum method
@@ -34,27 +34,27 @@ A trapped bead undergoes Brownian motion, damped by the harmonic trap. Its equat
 (overdamped — inertia is negligible at this scale and Reynolds number) is a
 Ornstein-Uhlenbeck process:
 
-\[
+$$
 \gamma \dot{x}(t) = -\kappa x(t) + \xi(t)
-\]
+$$
 
-where \(\gamma\) is the Stokes drag coefficient and \(\xi(t)\) is thermal (white) noise. The
-power spectral density of \(x(t)\) has a closed form — a Lorentzian:
+where $\gamma$ is the Stokes drag coefficient and $\xi(t)$ is thermal (white) noise. The
+power spectral density of $x(t)$ has a closed form — a Lorentzian:
 
-\[
+$$
 S_x(f) = \frac{D}{2\pi^2 \left(f_c^2 + f^2\right)}
-\]
+$$
 
 with two parameters that fully describe the trap:
 
-- **Corner frequency** \(f_c = \kappa / (2\pi\gamma)\) — where the spectrum rolls off from flat
-  (low frequency, dominated by the trap) to \(1/f^2\) (high frequency, dominated by free
+- **Corner frequency** $f_c = \kappa / (2\pi\gamma)$ — where the spectrum rolls off from flat
+  (low frequency, dominated by the trap) to $1/f^2$ (high frequency, dominated by free
   diffusion).
-- **Diffusion coefficient** \(D\), related to \(\gamma\) by the Einstein relation
-  \(D = k_BT/\gamma\).
+- **Diffusion coefficient** $D$, related to $\gamma$ by the Einstein relation
+  $D = k_BT/\gamma$.
 
 This is the classic Gittes & Schmidt (2002) power-spectrum calibration method — measure the QPD
-voltage's power spectrum, fit it to a Lorentzian, and get \(\kappa\) and \(\alpha\) without ever
+voltage's power spectrum, fit it to a Lorentzian, and get $\kappa$ and $\alpha$ without ever
 needing to apply a known force. See [Calibration & trap stiffness](calibration.md) for exactly
 how `salafleezers.calibration` implements this fit, including the aliasing correction needed
 because real digitizers sample at a finite rate.

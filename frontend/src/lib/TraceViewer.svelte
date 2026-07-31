@@ -7,7 +7,7 @@
   import { api } from './api'
   import { session } from './stores/session.svelte'
   import { theme } from './stores/theme.svelte'
-  import { seriesColor, dangerColor } from './theme/plot'
+  import { seriesColor, dangerColor, themedAxes } from './theme/plot'
   import { useRun } from './ui/useRun.svelte'
   import { formatApiError } from './ui/formatError'
   import type { MeasurementResult, StepFindAlgorithm, StepFindResult } from './types'
@@ -317,6 +317,15 @@
     return arr as uPlot.AlignedData
   })
 
+  let plotAxes = $derived.by((): uPlot.Axis[] => {
+    theme.current
+    const [xAxis, yAxis] = themedAxes()
+    return [
+      { ...xAxis, label: 'Time (s)', labelSize: 22 },
+      { ...yAxis, label: primaryChannel || 'value', labelSize: 34 },
+    ]
+  })
+
   function exportCsv() {
     if (!mainTime.length) return
     const header = ['time', primaryChannel, ...overlayChannels].join(',')
@@ -410,12 +419,14 @@
   </div>
 
   <div class="card stack" style="margin-top: 8px;">
+    <span class="dim mono" style="font-size: var(--text-xs);">{session.activeFile.filename}</span>
     {#if loading}<p class="muted">Loading…</p>{/if}
     {#if loadError}<p class="text-danger">{loadError}</p>{/if}
     <Plot
       bind:this={plotRef}
       data={plotData}
       series={plotSeries}
+      axes={plotAxes}
       height={340}
       onZoom={() => {}}
       onSelect={(min, max) => (selection = { start: min, end: max })}

@@ -11,36 +11,38 @@ Reference: Kalafut & Visscher, *Comput. Phys. Commun.* **179**, 716-723 (2008).
 
 The idea: model the trace as a piecewise-constant staircase, and greedily decide whether adding
 another step is justified by how much it reduces the fit's residual sum of squares
-(\(\chi^2\), called "QE" — quadratic error — in the original code), penalized by model
+($\chi^2$, called "QE" — quadratic error — in the original code), penalized by model
 complexity (a Schwarz/Bayesian Information Criterion, SIC/BIC):
 
 1. **Greedy insertion** — for every existing segment, try every possible split point; take the
-   split that most reduces total \(\chi^2\) across all segments. Accept it only if the
+   split that most reduces total $\chi^2$ across all segments. Accept it only if the
    improvement exceeds a penalty term. Repeat until no split clears the penalty.
 2. **Counter-fit (pruning)** — after insertion converges, try removing each existing step;
-   remove it if doing so increases \(\chi^2\) by less than a (separate) counter-penalty. This
+   remove it if doing so increases $\chi^2$ by less than a (separate) counter-penalty. This
    catches steps that were only locally justified during greedy insertion but aren't globally.
 
 Both passes repeat until nothing changes.
 
 ### The penalty
 
-`stepfind/kv.py::find_steps` uses an *absolute* threshold directly on \(\chi^2\) improvement — a
+`stepfind/kv.py::find_steps` uses an *absolute* threshold directly on $\chi^2$ improvement — a
 fixed BIC-like penalty term:
-\[
+
+$$
 \text{penalty} = \text{pen\_factor} \cdot \sigma^2 \cdot \ln N
-\]
-where \(\sigma^2 = \text{var(data)}\) and \(N\) is the full trace length. A split is accepted
-only if it reduces total \(\chi^2\) by more than this penalty; `pen_factor` (default 2.0) is the
+$$
+
+where $\sigma^2 = \text{var(data)}$ and $N$ is the full trace length. A split is accepted
+only if it reduces total $\chi^2$ by more than this penalty; `pen_factor` (default 2.0) is the
 knob that trades sensitivity (more, smaller steps found) against false positives — tune it
 empirically against your data.
 
 ## HMM (Hidden Markov Model)
 
-Models the trace as \(K\) discrete states, each
-emitting a Gaussian signal \(p(x\mid\text{state}=k) = \mathcal{N}(x;\mu_k,\sigma_k)\), with
-transitions between states governed by a \(K\times K\) transition matrix. Unlike KV (which
-discovers the number of steps automatically), HMM requires you to specify \(K\) (`--n-states`)
+Models the trace as $K$ discrete states, each
+emitting a Gaussian signal $p(x\mid\text{state}=k) = \mathcal{N}(x;\mu_k,\sigma_k)$, with
+transitions between states governed by a $K\times K$ transition matrix. Unlike KV (which
+discovers the number of steps automatically), HMM requires you to specify $K$ (`--n-states`)
 up front.
 
 `stepfind/hmm.py` implements the Viterbi algorithm from scratch in pure NumPy (no `hmmlearn`

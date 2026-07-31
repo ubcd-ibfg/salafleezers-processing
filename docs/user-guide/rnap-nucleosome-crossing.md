@@ -173,13 +173,13 @@ stretching of the tether and puts every trace in units of transcribed base pairs
 inverts the same extensible-WLC that
 [`analysis.wlc.xwlc_extension`](../physics/force-extension.md) applies:
 
-\[
+$$
 x = L_c\left(1 - \tfrac{1}{2}\sqrt{\tfrac{k_BT}{PF}} + \tfrac{F}{S}\right)
 \quad\Longrightarrow\quad
 \text{bp} = \frac{1}{h}\cdot\frac{x}{1 - \tfrac{1}{2}\sqrt{k_BT/PF} + F/S}
-\]
+$$
 
-with \(P=50\) nm, \(S=900\) pN, \(k_BT=4.14\) pN·nm and \(h=0.34\) nm/bp. Samples below 0.1 pN
+with $P=50$ nm, $S=900$ pN, $k_BT=4.14$ pN·nm and $h=0.34$ nm/bp. Samples below 0.1 pN
 come back as `NaN`: the WLC diverges at zero force and the conversion is meaningless there.
 
 ## 7. Alignment
@@ -190,11 +190,11 @@ This is the heart of the method. `align_to_ruler` works in three stages:
    find the scale factor that makes those pause positions most periodic at 64 bp. Formally it
    maximises the dwell-weighted circular resultant
 
-    \[
+    $$
     R(a) = \left|\frac{\sum_j w_j e^{2\pi i\,a x_j/\text{per}}}{\sum_j w_j}\right|
-    \]
+    $$
 
-    over trial scales \(a\), which is 1 when every pause sits at the same lattice phase and near
+    over trial scales $a$, which is 1 when every pause sits at the same lattice phase and near
     0 when they're scattered. This is a weighted periodogram: it uses all the pauses at once, so
     a few spurious plateaus picked up from the translocation ramps can't drag the fit the way a
     median of pause spacings can. The fitted scale absorbs error in the WLC parameters and in
@@ -299,9 +299,9 @@ reproducing the analysis later.
 
 Pause-free velocity is the distance covered divided by the time spent actually moving:
 
-\[
+$$
 v_\text{pf} = \frac{\Delta \text{bp}}{t_\text{total} - t_\text{paused}}
-\]
+$$
 
 `pfv_by_region` reports it for two regions — the ruler (naked DNA) and the nucleosome:
 

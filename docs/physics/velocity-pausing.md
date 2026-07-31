@@ -6,13 +6,13 @@ trace into a velocity, plus a way to summarize velocities as a distribution.
 ## Step-based velocity (`step_velocities`)
 
 Given a KV step-finding result (see [Step-finding theory](step-finding.md)), the velocity of
-segment \(i\) is just the level change divided by the dwell time between step boundaries:
+segment $i$ is just the level change divided by the dwell time between step boundaries:
 
-\[
+$$
 v_i = \frac{\text{level}_{i+1} - \text{level}_i}{t_{i+1} - t_i}
-\]
+$$
 
-Segments where \(|v_i|\) falls below `pause_threshold` (nm/s) are flagged as pauses rather than
+Segments where $|v_i|$ falls below `pause_threshold` (nm/s) are flagged as pauses rather than
 motion — useful for e.g. distinguishing a translocating motor's active segments from stalls, and
 computing what fraction of total time was spent paused (`pause_fraction`, time-weighted, not
 just a count of paused segments). This method is exact wherever step-finding is reliable, but

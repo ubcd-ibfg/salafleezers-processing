@@ -5,7 +5,7 @@
   import { api } from './api'
   import { session } from './stores/session.svelte'
   import { theme } from './stores/theme.svelte'
-  import { seriesColor, dangerColor } from './theme/plot'
+  import { seriesColor, dangerColor, themedAxes } from './theme/plot'
   import { useRun } from './ui/useRun.svelte'
   import { formatApiError } from './ui/formatError'
   import type { WLCFitResult, WLCMethod } from './types'
@@ -142,6 +142,29 @@
     return [{}, { label: 'residual', stroke: seriesColor(4), paths: () => null, points: { show: true, size: 3 } }]
   })
   let residualData = $derived.by((): uPlot.AlignedData => [sortedX, residuals] as uPlot.AlignedData)
+
+  // `time: false` on the x scale -- it defaults to treating x as a UNIX
+  // timestamp, which is wrong for a channel like "extension" (nm) and
+  // produces garbled date-formatted ticks (the same issue fixed on the
+  // Calibration view's PSD plots).
+  let plotAxes = $derived.by((): uPlot.Axis[] => {
+    theme.current
+    const [xAxis, yAxis] = themedAxes()
+    return [
+      { ...xAxis, label: xChannel, labelSize: 22 },
+      { ...yAxis, label: fChannel, labelSize: 34 },
+    ]
+  })
+  const plotScales: uPlot.Scales = { x: { time: false } }
+
+  let residualAxes = $derived.by((): uPlot.Axis[] => {
+    theme.current
+    const [xAxis, yAxis] = themedAxes()
+    return [
+      { ...xAxis, label: xChannel, labelSize: 22 },
+      { ...yAxis, label: 'residual', labelSize: 34 },
+    ]
+  })
 </script>
 
 {#if !session.activeFile}
@@ -167,9 +190,18 @@
   </div>
 
   <div class="card stack" style="margin-top: 8px;">
+    <span class="dim mono" style="font-size: var(--text-xs);">{session.activeFile.filename}</span>
     {#if loading}<p class="muted">Loading…</p>{/if}
     {#if loadError}<p class="text-danger">{loadError}</p>{/if}
-    <Plot bind:this={plotRef} data={plotData} series={plotSeries} height={340} cursor={false} />
+    <Plot
+      bind:this={plotRef}
+      data={plotData}
+      series={plotSeries}
+      axes={plotAxes}
+      scales={plotScales}
+      height={340}
+      cursor={false}
+    />
     <div class="row-center">
       <button onclick={() => plotRef?.exportPng(`${session.activeFile?.filename ?? 'force_ext'}_wlc.png`)}>
         Export PNG
@@ -214,7 +246,14 @@
     <div class="card" style="margin-top: 8px;">
       <span class="label">Residuals (data − model)</span>
       <div style="margin-top: 4px;">
-        <Plot data={residualData} series={residualSeries} height={140} cursor={false} />
+        <Plot
+          data={residualData}
+          series={residualSeries}
+          axes={residualAxes}
+          scales={plotScales}
+          height={140}
+          cursor={false}
+        />
       </div>
     </div>
   {/if}
